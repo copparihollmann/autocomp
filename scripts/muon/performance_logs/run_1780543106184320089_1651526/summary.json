@@ -1,0 +1,688 @@
+{
+  "per_core": [
+    {
+      "core_id": 0,
+      "cluster_id": 0,
+      "scheduler": {
+        "cycles": 913501,
+        "active_warps_sum": 2859488,
+        "eligible_warps_sum": 1772778,
+        "issued_warps_sum": 1772778,
+        "issue_width": 1
+      },
+      "smem_util": {
+        "cycles": 913501,
+        "lane_busy_sum": 0,
+        "lane_total": 16,
+        "bank_busy_sum": 0,
+        "bank_total": 4
+      },
+      "execute_util": {
+        "cycles": 913501,
+        "int_busy_sum": 181520,
+        "int_mul_busy_sum": 24487,
+        "int_div_busy_sum": 3848,
+        "fp_busy_sum": 184408,
+        "sfu_busy_sum": 234766
+      },
+      "dma_bytes_issued": 0,
+      "dma_bytes_completed": 0,
+      "dma_util": {
+        "cycles": 913501,
+        "busy_sum": 0
+      },
+      "tensor_bytes_issued": 0,
+      "tensor_bytes_completed": 0,
+      "tensor_util": {
+        "cycles": 913501,
+        "busy_sum": 0
+      },
+      "smem_conflicts": {
+        "instructions": 0,
+        "active_lanes": 0,
+        "conflict_lanes": 0,
+        "unique_banks": 0,
+        "unique_subbanks": 0
+      },
+      "gmem_hits": {
+        "l0_accesses": 175800,
+        "l0_hits": 172058,
+        "l1_accesses": 3742,
+        "l1_hits": 477,
+        "l2_accesses": 3265,
+        "l2_hits": 128
+      },
+      "latencies": {
+        "gmem_count": 175801,
+        "gmem_sum": 11665437,
+        "smem_count": 0,
+        "smem_sum": 0
+      },
+      "gmem_stats": {
+        "issued": 175801,
+        "completed": 175801,
+        "queue_full_rejects": 1228334,
+        "busy_rejects": 0,
+        "bytes_issued": 11255296,
+        "bytes_completed": 11255296,
+        "accesses": 0,
+        "hits": 0,
+        "bytes_hits": 0,
+        "inflight": 0,
+        "max_inflight": 24,
+        "max_completion_queue": 8,
+        "last_completion_cycle": 913317
+      },
+      "gmem_level_stats": {
+        "l0": {
+          "issued": 0,
+          "completed": 0,
+          "queue_full_rejects": 1587,
+          "busy_rejects": 0,
+          "bytes_issued": 0,
+          "bytes_completed": 0,
+          "accesses": 5417357,
+          "hits": 467715,
+          "bytes_hits": 29933760,
+          "inflight": 0,
+          "max_inflight": 0,
+          "max_completion_queue": 0,
+          "last_completion_cycle": null
+        },
+        "l1": {
+          "issued": 0,
+          "completed": 229,
+          "queue_full_rejects": 19,
+          "busy_rejects": 0,
+          "bytes_issued": 0,
+          "bytes_completed": 14656,
+          "accesses": 4949642,
+          "hits": 2816,
+          "bytes_hits": 180224,
+          "inflight": 0,
+          "max_inflight": 0,
+          "max_completion_queue": 0,
+          "last_completion_cycle": 913054
+        },
+        "l2": {
+          "issued": 0,
+          "completed": 5571,
+          "queue_full_rejects": 3454102,
+          "busy_rejects": 0,
+          "bytes_issued": 0,
+          "bytes_completed": 356544,
+          "accesses": 4946826,
+          "hits": 4738,
+          "bytes_hits": 303232,
+          "inflight": 0,
+          "max_inflight": 0,
+          "max_completion_queue": 0,
+          "last_completion_cycle": 911419
+        }
+      },
+      "smem_stats": {
+        "issued": 0,
+        "read_issued": 0,
+        "write_issued": 0,
+        "completed": 0,
+        "read_completed": 0,
+        "write_completed": 0,
+        "queue_full_rejects": 0,
+        "busy_rejects": 0,
+        "bytes_issued": 0,
+        "bytes_completed": 0,
+        "inflight": 0,
+        "max_inflight": 0,
+        "max_completion_queue": 0,
+        "last_completion_cycle": null,
+        "sample_cycles": 913501,
+        "bank_busy_samples": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "bank_read_busy_samples": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "bank_write_busy_samples": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "bank_attempts": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "bank_conflicts": [
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "icache_stats": {
+        "issued": 1772778,
+        "completed": 1772778,
+        "hits": 1771682,
+        "misses": 1096,
+        "queue_full_rejects": 0,
+        "busy_rejects": 0,
+        "bytes_issued": 14182224,
+        "bytes_completed": 14182224,
+        "last_completion_cycle": 913477
+      },
+      "lsu_stats": {
+        "issued": 42480,
+        "completed": 42480,
+        "queue_full_rejects": 0,
+        "busy_rejects": 0,
+        "global_ldq_issued": 41931,
+        "global_stq_issued": 549,
+        "shared_ldq_issued": 0,
+        "shared_stq_issued": 0,
+        "global_ldq_completed": 41931,
+        "global_stq_completed": 549,
+        "shared_ldq_completed": 0,
+        "shared_stq_completed": 0,
+        "global_ldq_queue_full_rejects": 0,
+        "global_stq_queue_full_rejects": 0,
+        "shared_ldq_queue_full_rejects": 0,
+        "shared_stq_queue_full_rejects": 0,
+        "global_ldq_busy_rejects": 0,
+        "global_stq_busy_rejects": 0,
+        "shared_ldq_busy_rejects": 0,
+        "shared_stq_busy_rejects": 0
+      },
+      "writeback_stats": {
+        "issued": 175800,
+        "completed": 175800,
+        "queue_full_rejects": 0,
+        "busy_rejects": 0
+      },
+      "barrier_summary": {
+        "arrivals": 0,
+        "queue_rejects": 0,
+        "release_events": 0,
+        "warps_released": 0,
+        "max_release_batch": 0,
+        "total_scheduled_wait_cycles": 0,
+        "max_scheduled_wait_cycles": 0
+      },
+      "dma_completed": 0,
+      "tensor_completed": 0,
+      "stall_summary": {
+        "gmem_queue_full": 1228334,
+        "gmem_busy": 0,
+        "smem_queue_full": 0,
+        "smem_busy": 0
+      },
+      "gmem_latency_hist": {
+        "buckets": [
+          0,
+          0,
+          23662,
+          23565,
+          61980,
+          66594
+        ]
+      },
+      "smem_latency_hist": {
+        "buckets": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "core_id": 1,
+      "cluster_id": 0,
+      "scheduler": {
+        "cycles": 913501,
+        "active_warps_sum": 2862435,
+        "eligible_warps_sum": 1797120,
+        "issued_warps_sum": 1797120,
+        "issue_width": 1
+      },
+      "smem_util": {
+        "cycles": 913501,
+        "lane_busy_sum": 0,
+        "lane_total": 16,
+        "bank_busy_sum": 0,
+        "bank_total": 4
+      },
+      "execute_util": {
+        "cycles": 913501,
+        "int_busy_sum": 181511,
+        "int_mul_busy_sum": 24569,
+        "int_div_busy_sum": 4298,
+        "fp_busy_sum": 179583,
+        "sfu_busy_sum": 231694
+      },
+      "dma_bytes_issued": 0,
+      "dma_bytes_completed": 0,
+      "dma_util": {
+        "cycles": 913501,
+        "busy_sum": 0
+      },
+      "tensor_bytes_issued": 0,
+      "tensor_bytes_completed": 0,
+      "tensor_util": {
+        "cycles": 913501,
+        "busy_sum": 0
+      },
+      "smem_conflicts": {
+        "instructions": 0,
+        "active_lanes": 0,
+        "conflict_lanes": 0,
+        "unique_banks": 0,
+        "unique_subbanks": 0
+      },
+      "gmem_hits": {
+        "l0_accesses": 175797,
+        "l0_hits": 172510,
+        "l1_accesses": 3287,
+        "l1_hits": 752,
+        "l2_accesses": 2535,
+        "l2_hits": 101
+      },
+      "latencies": {
+        "gmem_count": 175798,
+        "gmem_sum": 14931994,
+        "smem_count": 0,
+        "smem_sum": 0
+      },
+      "gmem_stats": {
+        "issued": 175798,
+        "completed": 175798,
+        "queue_full_rejects": 3837426,
+        "busy_rejects": 0,
+        "bytes_issued": 11255104,
+        "bytes_completed": 11255104,
+        "accesses": 0,
+        "hits": 0,
+        "bytes_hits": 0,
+        "inflight": 0,
+        "max_inflight": 24,
+        "max_completion_queue": 7,
+        "last_completion_cycle": 913340
+      },
+      "gmem_level_stats": {
+        "l0": {
+          "issued": 0,
+          "completed": 0,
+          "queue_full_rejects": 1587,
+          "busy_rejects": 0,
+          "bytes_issued": 0,
+          "bytes_completed": 0,
+          "accesses": 5417357,
+          "hits": 467715,
+          "bytes_hits": 29933760,
+          "inflight": 0,
+          "max_inflight": 0,
+          "max_completion_queue": 0,
+          "last_completion_cycle": null
+        },
+        "l1": {
+          "issued": 0,
+          "completed": 229,
+          "queue_full_rejects": 19,
+          "busy_rejects": 0,
+          "bytes_issued": 0,
+          "bytes_completed": 14656,
+          "accesses": 4949642,
+          "hits": 2816,
+          "bytes_hits": 180224,
+          "inflight": 0,
+          "max_inflight": 0,
+          "max_completion_queue": 0,
+          "last_completion_cycle": 913054
+        },
+        "l2": {
+          "issued": 0,
+          "completed": 5571,
+          "queue_full_rejects": 3454102,
+          "busy_rejects": 0,
+          "bytes_issued": 0,
+          "bytes_completed": 356544,
+          "accesses": 4946826,
+          "hits": 4738,
+          "bytes_hits": 303232,
+          "inflight": 0,
+          "max_inflight": 0,
+          "max_completion_queue": 0,
+          "last_completion_cycle": 911419
+        }
+      },
+      "smem_stats": {
+        "issued": 0,
+        "read_issued": 0,
+        "write_issued": 0,
+        "completed": 0,
+        "read_completed": 0,
+        "write_completed": 0,
+        "queue_full_rejects": 0,
+        "busy_rejects": 0,
+        "bytes_issued": 0,
+        "bytes_completed": 0,
+        "inflight": 0,
+        "max_inflight": 0,
+        "max_completion_queue": 0,
+        "last_completion_cycle": null,
+        "sample_cycles": 913501,
+        "bank_busy_samples": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "bank_read_busy_samples": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "bank_write_busy_samples": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "bank_attempts": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "bank_conflicts": [
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "icache_stats": {
+        "issued": 1797120,
+        "completed": 1797120,
+        "hits": 1796032,
+        "misses": 1088,
+        "queue_full_rejects": 0,
+        "busy_rejects": 0,
+        "bytes_issued": 14376960,
+        "bytes_completed": 14376960,
+        "last_completion_cycle": 913500
+      },
+      "lsu_stats": {
+        "issued": 42477,
+        "completed": 42477,
+        "queue_full_rejects": 0,
+        "busy_rejects": 0,
+        "global_ldq_issued": 41931,
+        "global_stq_issued": 546,
+        "shared_ldq_issued": 0,
+        "shared_stq_issued": 0,
+        "global_ldq_completed": 41931,
+        "global_stq_completed": 546,
+        "shared_ldq_completed": 0,
+        "shared_stq_completed": 0,
+        "global_ldq_queue_full_rejects": 0,
+        "global_stq_queue_full_rejects": 0,
+        "shared_ldq_queue_full_rejects": 0,
+        "shared_stq_queue_full_rejects": 0,
+        "global_ldq_busy_rejects": 0,
+        "global_stq_busy_rejects": 0,
+        "shared_ldq_busy_rejects": 0,
+        "shared_stq_busy_rejects": 0
+      },
+      "writeback_stats": {
+        "issued": 175797,
+        "completed": 175797,
+        "queue_full_rejects": 0,
+        "busy_rejects": 0
+      },
+      "barrier_summary": {
+        "arrivals": 0,
+        "queue_rejects": 0,
+        "release_events": 0,
+        "warps_released": 0,
+        "max_release_batch": 0,
+        "total_scheduled_wait_cycles": 0,
+        "max_scheduled_wait_cycles": 0
+      },
+      "dma_completed": 0,
+      "tensor_completed": 0,
+      "stall_summary": {
+        "gmem_queue_full": 3837426,
+        "gmem_busy": 0,
+        "smem_queue_full": 0,
+        "smem_busy": 0
+      },
+      "gmem_latency_hist": {
+        "buckets": [
+          0,
+          2,
+          24532,
+          27016,
+          44934,
+          79314
+        ]
+      },
+      "smem_latency_hist": {
+        "buckets": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      }
+    }
+  ],
+  "total": {
+    "num_cores": 2,
+    "scheduler": {
+      "cycles": 1827002,
+      "active_warps_sum": 5721923,
+      "eligible_warps_sum": 3569898,
+      "issued_warps_sum": 3569898,
+      "issue_width": 1
+    },
+    "smem_util": {
+      "cycles": 1827002,
+      "lane_busy_sum": 0,
+      "lane_total": 16,
+      "bank_busy_sum": 0,
+      "bank_total": 4
+    },
+    "execute_util": {
+      "cycles": 1827002,
+      "int_busy_sum": 363031,
+      "int_mul_busy_sum": 49056,
+      "int_div_busy_sum": 8146,
+      "fp_busy_sum": 363991,
+      "sfu_busy_sum": 466460
+    },
+    "dma_bytes_issued": 0,
+    "dma_bytes_completed": 0,
+    "dma_util": {
+      "cycles": 1827002,
+      "busy_sum": 0
+    },
+    "tensor_bytes_issued": 0,
+    "tensor_bytes_completed": 0,
+    "tensor_util": {
+      "cycles": 1827002,
+      "busy_sum": 0
+    },
+    "stall_summary": {
+      "gmem_queue_full": 5065760,
+      "gmem_busy": 0,
+      "smem_queue_full": 0,
+      "smem_busy": 0
+    },
+    "gmem_latency_hist": {
+      "buckets": [
+        0,
+        2,
+        48194,
+        50581,
+        106914,
+        145908
+      ]
+    },
+    "smem_latency_hist": {
+      "buckets": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "smem_conflicts": {
+      "instructions": 0,
+      "active_lanes": 0,
+      "conflict_lanes": 0,
+      "unique_banks": 0,
+      "unique_subbanks": 0
+    },
+    "gmem_hits": {
+      "l0_accesses": 351597,
+      "l0_hits": 344568,
+      "l1_accesses": 7029,
+      "l1_hits": 1229,
+      "l2_accesses": 5800,
+      "l2_hits": 229
+    },
+    "latencies": {
+      "gmem_count": 351599,
+      "gmem_sum": 26597431,
+      "smem_count": 0,
+      "smem_sum": 0
+    },
+    "gmem_stats": {
+      "issued": 351599,
+      "completed": 351599,
+      "queue_full_rejects": 5065760,
+      "busy_rejects": 0,
+      "bytes_issued": 22510400,
+      "bytes_completed": 22510400,
+      "accesses": 0,
+      "hits": 0,
+      "bytes_hits": 0,
+      "inflight": 0,
+      "max_inflight": 24,
+      "max_completion_queue": 8,
+      "last_completion_cycle": 913340
+    },
+    "smem_stats": {
+      "issued": 0,
+      "read_issued": 0,
+      "write_issued": 0,
+      "completed": 0,
+      "read_completed": 0,
+      "write_completed": 0,
+      "queue_full_rejects": 0,
+      "busy_rejects": 0,
+      "bytes_issued": 0,
+      "bytes_completed": 0,
+      "inflight": 0,
+      "max_inflight": 0,
+      "max_completion_queue": 0,
+      "last_completion_cycle": null,
+      "sample_cycles": 1827002,
+      "bank_busy_samples": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "bank_read_busy_samples": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "bank_write_busy_samples": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "bank_attempts": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "bank_conflicts": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "icache_stats": {
+      "issued": 3569898,
+      "completed": 3569898,
+      "hits": 3567714,
+      "misses": 2184,
+      "queue_full_rejects": 0,
+      "busy_rejects": 0,
+      "bytes_issued": 28559184,
+      "bytes_completed": 28559184,
+      "last_completion_cycle": 913500
+    },
+    "lsu_stats": {
+      "issued": 84957,
+      "completed": 84957,
+      "queue_full_rejects": 0,
+      "busy_rejects": 0,
+      "global_ldq_issued": 83862,
+      "global_stq_issued": 1095,
+      "shared_ldq_issued": 0,
+      "shared_stq_issued": 0,
+      "global_ldq_completed": 83862,
+      "global_stq_completed": 1095,
+      "shared_ldq_completed": 0,
+      "shared_stq_completed": 0,
+      "global_ldq_queue_full_rejects": 0,
+      "global_stq_queue_full_rejects": 0,
+      "shared_ldq_queue_full_rejects": 0,
+      "shared_stq_queue_full_rejects": 0,
+      "global_ldq_busy_rejects": 0,
+      "global_stq_busy_rejects": 0,
+      "shared_ldq_busy_rejects": 0,
+      "shared_stq_busy_rejects": 0
+    },
+    "writeback_stats": {
+      "issued": 351597,
+      "completed": 351597,
+      "queue_full_rejects": 0,
+      "busy_rejects": 0
+    },
+    "barrier_summary": {
+      "arrivals": 0,
+      "queue_rejects": 0,
+      "release_events": 0,
+      "warps_released": 0,
+      "max_release_batch": 0,
+      "total_scheduled_wait_cycles": 0,
+      "max_scheduled_wait_cycles": 0
+    },
+    "dma_completed": 0,
+    "tensor_completed": 0
+  }
+}

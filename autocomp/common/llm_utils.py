@@ -44,6 +44,12 @@ together_key_str = _get_key("TOGETHER_API_KEY")
 aws_access_key = _get_key("AWS_ACCESS_KEY_ID", default=None)
 aws_secret_key = _get_key("AWS_SECRET_ACCESS_KEY", default=None)
 aws_region = _get_key("AWS_REGION", default="us-west-2")
+# Bedrock API key (bearer token). boto3's bedrock-runtime client auto-detects
+# AWS_BEARER_TOKEN_BEDROCK; the anthropic.AnthropicBedrock (SigV4) path does not.
+# When a bearer token is present without SigV4 keys, route Claude through the
+# boto3 Converse path so the bearer token is actually used (see LLMClient.__init__).
+aws_bearer_token = _get_key("AWS_BEARER_TOKEN_BEDROCK", default=None)
+_aws_use_bearer = bool(aws_bearer_token) and not (aws_access_key and aws_secret_key)
 google_cloud_project = _get_key("GOOGLE_CLOUD_PROJECT", default=None)
 google_cloud_location = _get_key("GOOGLE_CLOUD_LOCATION", default=None)
 google_api_key = _get_key("GOOGLE_API_KEY", default=None)
@@ -440,7 +446,7 @@ def _extract_usage(provider: str, resp) -> dict:
     even if the response object has an unexpected shape (e.g. SDK version
     mismatch).
     """
-    usage = {"input_tokens": 0, "output_tokens": 0}
+    usage = {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0}
     try:
         if provider == "openai":
             if hasattr(resp, "usage") and resp.usage:
@@ -454,6 +460,9 @@ def _extract_usage(provider: str, resp) -> dict:
             if hasattr(resp, "usage") and resp.usage:
                 usage["input_tokens"] = getattr(resp.usage, "input_tokens", 0) or 0
                 usage["output_tokens"] = getattr(resp.usage, "output_tokens", 0) or 0
+                # Anthropic prompt-caching token counts (priced separately).
+                usage["cache_read_tokens"] = getattr(resp.usage, "cache_read_input_tokens", 0) or 0
+                usage["cache_write_tokens"] = getattr(resp.usage, "cache_creation_input_tokens", 0) or 0
         elif provider == "gcp":
             if hasattr(resp, "usage_metadata") and resp.usage_metadata:
                 usage["input_tokens"] = getattr(resp.usage_metadata, "prompt_token_count", 0) or 0
@@ -462,6 +471,9 @@ def _extract_usage(provider: str, resp) -> dict:
             if isinstance(resp, dict) and "usage" in resp:
                 usage["input_tokens"] = resp["usage"].get("inputTokens", 0) or 0
                 usage["output_tokens"] = resp["usage"].get("outputTokens", 0) or 0
+                # Bedrock Converse prompt-caching token counts (priced separately).
+                usage["cache_read_tokens"] = resp["usage"].get("cacheReadInputTokens", 0) or 0
+                usage["cache_write_tokens"] = resp["usage"].get("cacheWriteInputTokens", 0) or 0
     except Exception:
         pass
     return usage
@@ -474,10 +486,26 @@ def _attach_usage(normalized: dict, provider: str, resp, t0: float, model: str) 
         usage["duration_s"] = round(time.perf_counter() - t0, 3)
         usage["model"] = model
         usage["phase"] = llm_phase.get("unknown")
+        # Per-call USD estimate (here input size is exact, so the long-context
+        # premium is detected correctly; summed aggregates cannot do that).
+        try:
+            from autocomp.common import cost as _cost
+            usage["cost_usd"] = _cost.estimate_cost(
+                model,
+                usage.get("input_tokens", 0),
+                usage.get("output_tokens", 0),
+                usage.get("cache_read_tokens", 0),
+                usage.get("cache_write_tokens", 0),
+            )
+            # Real-time: fold into the process-global live ledger + snapshot file.
+            _cost.record_call(model, usage)
+        except Exception:
+            usage["cost_usd"] = 0.0
         normalized["usage"] = usage
     except Exception:
         normalized.setdefault("usage", {
-            "input_tokens": 0, "output_tokens": 0, "duration_s": 0,
+            "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0,
+            "cache_write_tokens": 0, "cost_usd": 0.0, "duration_s": 0,
             "model": model, "phase": llm_phase.get("unknown"),
         })
 
@@ -544,6 +572,15 @@ async def fetch_tool_completion(
     model rejects some parameter we pay one round-trip; every subsequent
     call skips that param from the start.
     """
+    # Hard spend cap: in 'stop' mode this raises BudgetExceeded before issuing
+    # the request, so a configured project budget cannot be overrun. Placed
+    # before the retry loop so it propagates rather than being retried.
+    try:
+        from autocomp.common import cost as _cost
+        _cost.assert_within_budget()
+    except ImportError:
+        pass
+
     max_retries = 8
     for attempt in range(max_retries):
         skip = _LEARNED_UNSUPPORTED_PARAMS.get((provider, model), set())
@@ -750,7 +787,7 @@ async def fetch_tool_completion(
         "role": "assistant",
         "content": "Error: max retries reached",
         "tool_calls": [],
-        "usage": {"input_tokens": 0, "output_tokens": 0, "duration_s": 0, "model": model, "phase": llm_phase.get("unknown")},
+        "usage": {"input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0, "cost_usd": 0.0, "duration_s": 0, "model": model, "phase": llm_phase.get("unknown")},
     }
 
 
@@ -772,11 +809,14 @@ def aggregate_usage(results: list[dict]) -> dict:
         if phase not in by_phase:
             by_phase[phase] = {}
         if model not in by_phase[phase]:
-            by_phase[phase][model] = {"calls": 0, "input_tokens": 0, "output_tokens": 0, "duration_s": 0.0, "max_duration_s": 0.0}
+            by_phase[phase][model] = {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0, "cost_usd": 0.0, "duration_s": 0.0, "max_duration_s": 0.0}
         entry = by_phase[phase][model]
         entry["calls"] += 1
         entry["input_tokens"] += u.get("input_tokens", 0)
         entry["output_tokens"] += u.get("output_tokens", 0)
+        entry["cache_read_tokens"] += u.get("cache_read_tokens", 0)
+        entry["cache_write_tokens"] += u.get("cache_write_tokens", 0)
+        entry["cost_usd"] = round(entry["cost_usd"] + u.get("cost_usd", 0.0), 6)
         call_dur = u.get("duration_s", 0)
         entry["duration_s"] = round(entry["duration_s"] + call_dur, 3)
         entry["max_duration_s"] = round(max(entry["max_duration_s"], call_dur), 3)
@@ -819,9 +859,12 @@ class LLMClient:
             self.async_client = self.client
         elif self.provider == "anthropic":
             self.async_client = anthropic.AsyncAnthropic(api_key=anthropic_key_str)
-        elif self.provider == "aws" and ("claude" in model or "anthropic" in model):
+        elif self.provider == "aws" and ("claude" in model or "anthropic" in model) and not _aws_use_bearer:
             # Use explicit keys if provided, otherwise let boto3/anthropic
-            # pick up credentials from IAM role (instance metadata)
+            # pick up credentials from IAM role (instance metadata).
+            # NOTE: this AnthropicBedrock path uses SigV4 and does NOT honor a
+            # Bedrock bearer token; when _aws_use_bearer is set we skip it and
+            # fall through to the boto3 Converse path below (which does).
             bedrock_kwargs = {"aws_region": aws_region}
             if aws_access_key and aws_secret_key:
                 bedrock_kwargs["aws_access_key"] = aws_access_key

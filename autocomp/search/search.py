@@ -24,6 +24,7 @@ from autocomp.agents.saturn.saturn_agent import SaturnLLMAgent
 # ... register more LLM agents here ...
 # Register eval backends
 from autocomp.backend.gemmini.gemmini_eval import GemminiEvalBackend
+from autocomp.backend.muon.muon_eval import MuonEvalBackend
 from autocomp.backend.kernelbench.kb_eval import KBEvalBackend, KERNELBENCH_DIR
 from autocomp.backend.gpumode.gpumode_eval import GpuModeEvalBackend
 from autocomp.backend.trn.trn_eval import TrnEvalBackend
@@ -85,6 +86,8 @@ def create_backend_and_agents(
         eval_backend = XnnpackEvalBackend()
     elif backend_name == "metal":
         eval_backend = MetalEvalBackend()
+    elif backend_name == "muon":
+        eval_backend = MuonEvalBackend(hw_config)
     else:
         raise ValueError(f"Unknown backend: {backend_name}")
 
@@ -223,6 +226,10 @@ def load_initial_code(backend_name: str, prob: "Prob") -> str:
             sol_path = SOLS_DIR / "admm-multifunction" / f"sol{prob_id}_unopt_sw.c"
         else:
             sol_path = SOLS_DIR / prob_type / f"sol{prob_id}_exo_baseline.c"
+        prob.sol_file = sol_path
+        return sol_path.read_text()
+    elif backend_name == "muon":
+        sol_path = SOLS_DIR / prob_type / f"sol{prob_id}_baseline.cpp"
         prob.sol_file = sol_path
         return sol_path.read_text()
     elif backend_name == "trn":
@@ -1093,15 +1100,38 @@ class BeamSearchStrategy(SearchStrategy):
             "iterations": all_iteration_metrics,
         }
         try:
+            from autocomp.common import cost as _cost
             total_input_tokens = 0
             total_output_tokens = 0
             total_llm_wall_s = 0.0
             total_eval_duration = 0.0
+            total_cost_usd = 0.0
+            cost_by_model: dict[str, float] = {}
+            unknown_cost_models: set[str] = set()
             for im in all_iteration_metrics:
                 for phase in ("plan_generation", "code_generation", "context_selection", "menu_generation"):
-                    for model_data in im.get(phase, {}).values():
+                    for model, model_data in im.get(phase, {}).items():
                         total_input_tokens += model_data.get("input_tokens", 0)
                         total_output_tokens += model_data.get("output_tokens", 0)
+                        # Prefer the per-call cost summed in aggregate_usage (it
+                        # captures per-request long-context crossings); fall back
+                        # to a coarse recompute from summed tokens if absent.
+                        if "cost_usd" in model_data:
+                            usd = model_data.get("cost_usd", 0.0)
+                        else:
+                            usd = _cost.estimate_cost(
+                                model,
+                                model_data.get("input_tokens", 0),
+                                model_data.get("output_tokens", 0),
+                                model_data.get("cache_read_tokens", 0),
+                                model_data.get("cache_write_tokens", 0),
+                            )
+                        total_cost_usd += usd
+                        cost_by_model[model] = round(cost_by_model.get(model, 0.0) + usd, 6)
+                        if _cost.price_for(model) is None and (
+                            model_data.get("input_tokens") or model_data.get("output_tokens")
+                        ):
+                            unknown_cost_models.add(model)
                 total_llm_wall_s += im.get("plan_duration_s", 0)
                 total_llm_wall_s += im.get("code_duration_s", 0)
                 total_eval_duration += im.get("evaluation", {}).get("duration_s", 0)
@@ -1109,6 +1139,10 @@ class BeamSearchStrategy(SearchStrategy):
             run_metrics["total_output_tokens"] = total_output_tokens
             run_metrics["total_llm_duration_s"] = round(total_llm_wall_s, 3)
             run_metrics["total_eval_duration_s"] = round(total_eval_duration, 3)
+            run_metrics["estimated_cost_usd"] = round(total_cost_usd, 4)
+            run_metrics["estimated_cost_by_model_usd"] = cost_by_model
+            if unknown_cost_models:
+                run_metrics["cost_unknown_models"] = sorted(unknown_cost_models)
         except Exception as e:
             logger.warning("Failed to aggregate run metrics: %s", e)
         best = self._get_best_candidate()
@@ -1128,14 +1162,19 @@ class BeamSearchStrategy(SearchStrategy):
             if n >= 1_000:
                 return f"{n / 1_000:.1f}K"
             return str(n)
+        est_cost = run_metrics.get("estimated_cost_usd")
+        cost_str = f" | est. cost: ${est_cost:.4f}" if est_cost is not None else ""
+        if run_metrics.get("cost_unknown_models"):
+            cost_str += f" (unpriced: {', '.join(run_metrics['cost_unknown_models'])})"
         logger.info(
-            "Token usage (cumulative) — input: %s, output: %s, total: %s | LLM time: %ss, eval time: %ss, total time: %ss",
+            "Token usage (cumulative) — input: %s, output: %s, total: %s | LLM time: %ss, eval time: %ss, total time: %ss%s",
             _fmt_tokens(total_in),
             _fmt_tokens(total_out),
             _fmt_tokens(total_tok),
             run_metrics.get("total_llm_duration_s", "?"),
             run_metrics.get("total_eval_duration_s", "?"),
             run_total_s,
+            cost_str,
         )
 
     def _save_iter_metrics_incremental(self, iter_metrics, iteration, all_iteration_metrics):
@@ -1171,6 +1210,15 @@ class BeamSearchStrategy(SearchStrategy):
         losses = []
         all_iteration_metrics = []
         run_t0 = time.perf_counter()
+        try:
+            from autocomp.common import cost as _cost
+            _cost.start_run(self.output_dir)
+            logger.info(
+                "Live cost tracking → %s  (watch: watch -n 2 python -m autocomp.common.cost %s)",
+                self.output_dir / _cost.LIVE_SNAPSHOT_NAME, self.output_dir,
+            )
+        except Exception:
+            pass
         for i in range(1, iterations + 1):
             iter_t0 = time.perf_counter()
             iter_metrics = {"_iter_t0": iter_t0}
@@ -1489,6 +1537,22 @@ class BeamSearchStrategy(SearchStrategy):
             final_snapshot = {k: v for k, v in iter_metrics.items() if not k.startswith("_")}
             all_iteration_metrics.append(final_snapshot)
 
+            # Log cumulative cost/tokens to W&B so spend is charted per iteration.
+            try:
+                from autocomp.common import cost as _cost
+                snap = _cost.running_total()
+                wandb.log({
+                    "cost/cumulative_usd": snap.get("total_usd", 0.0),
+                    "cost/input_tokens": snap.get("input_tokens", 0),
+                    "cost/output_tokens": snap.get("output_tokens", 0),
+                    "cost/cache_read_tokens": snap.get("cache_read_tokens", 0),
+                    "cost/cache_write_tokens": snap.get("cache_write_tokens", 0),
+                    "cost/llm_calls": snap.get("calls", 0),
+                    "iteration": i,
+                })
+            except Exception:
+                pass
+
         self._save_run_metrics(all_iteration_metrics)
         best = self._get_best_candidate()
         initial_candidates = self.repository.get_candidates(0)
@@ -1504,8 +1568,20 @@ class BeamSearchStrategy(SearchStrategy):
                 }
             )
 
+        try:
+            from autocomp.common import cost as _cost
+            _final_cost = _cost.running_total().get("total_usd", 0.0)
+            _proj_total = _cost.project_total().get("total_usd", 0.0)
+            wandb.summary["total_cost_usd"] = round(_final_cost, 4)
+            wandb.summary["project_total_cost_usd"] = round(_proj_total, 4)
+        except Exception:
+            _final_cost = None
+            _proj_total = None
+
         logger.info("=" * 60)
         logger.info("Optimization complete. %d iterations in %.1f minutes.", len(all_iteration_metrics), elapsed / 60)
+        if _final_cost is not None:
+            logger.info("Estimated cost — this run: $%.4f | project lifetime: $%.4f", _final_cost, _proj_total)
         if initial_score is not None:
             logger.info("Initial score: %.3f", initial_score)
         if best and best.score is not None:

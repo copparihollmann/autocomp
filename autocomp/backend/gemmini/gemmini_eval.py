@@ -1,3 +1,5 @@
+import os
+import re
 import subprocess
 import pathlib
 import multiprocessing
@@ -12,8 +14,16 @@ from autocomp.backend.eval_backend import EvalBackend
 from autocomp.hw_config.gemmini_config import GemminiHardwareConfig
 
 FP32_4PE_CHIPYARD_PATH = None
-INT8_16PE_CHIPYARD_PATH = "/scratch/charleshong/chipyard"
+INT8_16PE_CHIPYARD_PATH = "/scratch/agustin/projects/chipyard-mx"  # MX-Gemmini (dim=16) checkout
 INT8_32PE_CHIPYARD_PATH = None
+
+# MX-Gemmini mode: the MX spike functional model requires binaries built with
+# -DSPIKE_SIM, which gemmini-rocc-tests produces via build_spike.sh into
+# build_spike/ (vs build.sh -> build/ for the legacy int8/fp32 flow). Toggle
+# with the GEMMINI_MX env var (default on for this checkout).
+MX_GEMMINI = os.environ.get("GEMMINI_MX", "1") != "0"
+_BUILD_SCRIPT = "./build_spike.sh" if MX_GEMMINI else "./build.sh"
+_BUILD_DIR = "build_spike" if MX_GEMMINI else "build"
 
 def clean_code(code_str: str) -> str:
     """
@@ -76,45 +86,42 @@ def compile_gemmini_code(code_contents: str, gemmini_path: pathlib.Path):
     #     filedata = file.write(filedata)
     
     # build software
-    p = subprocess.run(["sh", "./build.sh"], cwd=gemmini_sw_path, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    p = subprocess.run(["sh", _BUILD_SCRIPT], cwd=gemmini_sw_path, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     if p.returncode != 0:
         return
-    
-    return gemmini_sw_path / "build" / "bareMetalC" / (test_name + "-baremetal")
 
-def run_spike_mp(code_contents_lst: list[str], gemmini_path: pathlib.Path, timeout: float=5):
-    manager = multiprocessing.Manager()
+    return gemmini_sw_path / _BUILD_DIR / "bareMetalC" / (test_name + "-baremetal")
 
-    return_dicts = []
-    procs = []
+_HOST_FLOAT_RE = re.compile(
+    r"\bfloat\b|\bdouble\b|\bexp_f\b|\bf_exp\b|\bpow2i\b|\bbf16_to_f\b|\bfp8_e4m3_rtz\b|\bf_abs\b|\bexpf\b|\bsqrtf?\b|\blogf?\b",
+)
+def _count_host_float_ops(code_str: str) -> int:
+    """Count host floating-point indicators in a candidate kernel body. The RadianceGemminiOnlyConfig
+    host Rocket has NO FPU, so ANY of these traps on real RTL (spike hides it). Used by MX_NOFPU_COST
+    to penalize non-deployable (float-using) kernels so the optimizer prefers the float-free integer
+    softmax. Strip // and /* */ comments first so commentary about "float" doesn't count."""
+    s = re.sub(r"//[^\n]*", "", code_str)
+    s = re.sub(r"/\*.*?\*/", "", s, flags=re.S)
+    return len(_HOST_FLOAT_RE.findall(s))
+
+
+def run_spike_mp(code_contents_lst: list[str], gemmini_path: pathlib.Path, timeout: float=120):
+    """Evaluate candidate kernels on spike SEQUENTIALLY.
+
+    All candidates share a single bareMetalC/auto_comp_test.c source and a single
+    build_spike/.../auto_comp_test-baremetal binary, so they must NOT be built/run
+    concurrently — doing so makes them clobber each other's source/binary and
+    produces wrong or cross-contaminated results. Each candidate is therefore
+    written, built, and run in turn. `timeout` is a PER-CANDIDATE wall-clock bound
+    on the spike run, so a kernel that hangs spike is killed and reported as
+    "Timeout" without stalling the whole batch.
+    """
+    results = []
     for code_i, code_contents in enumerate(code_contents_lst):
-        return_dict = manager.dict()
-        return_dicts.append(return_dict)
-        p = multiprocessing.Process(target=run_spike, args=(code_contents,return_dict,gemmini_path,str(code_i),timeout))
-        p.start()
-        procs.append(p)
-        time.sleep(2)
-
-    # while any(p.is_alive() for p in procs):
-    #         # All the processes are done, break now.
-    #     time.sleep(1)  # Just to avoid hogging the CPU
-
-    start = time.time()
-    while time.time() - start <= timeout:
-        if not any(p.is_alive() for p in procs):
-            # All the processes are done, break now.
-            break
-        time.sleep(.1)  # Just to avoid hogging the CPU
-    else:
-        # We only enter this if we didn't 'break' above.
-        logger.info("spike ran for more than %d seconds, terminating.", timeout)
-        for i, p in enumerate(procs):
-            if p.is_alive():
-                p.terminate()
-                p.join()
-                return_dicts[i]["retval"] = "Timeout"
-
-    return [return_dict["retval"] for return_dict in return_dicts]
+        return_dict: dict = {}
+        run_spike(code_contents, return_dict, gemmini_path, str(code_i), timeout)
+        results.append(return_dict.get("retval", "Timeout"))
+    return results
     
 def run_spike(code_contents: str, return_dict: dict, gemmini_path: pathlib.Path, test_name_str: str, timeout: float):
     test_name = "auto_comp_test"
@@ -133,16 +140,21 @@ def run_spike(code_contents: str, return_dict: dict, gemmini_path: pathlib.Path,
     # with open(gemmini_sw_path / 'bareMetalC' / 'Makefile', 'w') as file:
     #     filedata = file.write(filedata)
     
-    # build software
-    p = subprocess.run(["sh", "./build.sh"], cwd=gemmini_sw_path, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    # build software (baremetal only — spike doesn't need the linux/pk variants)
+    p = subprocess.run(["sh", _BUILD_SCRIPT, "BAREMETAL_ONLY=1"], cwd=gemmini_sw_path, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     if p.returncode != 0:
         # return_dict["retval"] = p.stdout.decode()
         return_dict["retval"] = "Compile error"
         return
 
-    p = subprocess.run(["stdbuf", "-oL", "spike", "--extension=gemmini", "./build/bareMetalC/auto_comp_test-baremetal"], cwd=gemmini_sw_path, 
-                         capture_output=True, text=True, errors="ignore")
-    spike_output = p.stdout
+    try:
+        p = subprocess.run(["stdbuf", "-oL", "spike", "--extension=gemmini", f"./{_BUILD_DIR}/bareMetalC/auto_comp_test-baremetal"], cwd=gemmini_sw_path,
+                             capture_output=True, text=True, errors="ignore", timeout=timeout)
+        spike_output = p.stdout
+    except subprocess.TimeoutExpired:
+        logger.info("spike ran for more than %s seconds, terminating.", timeout)
+        return_dict["retval"] = "Timeout"
+        return
 
     # # run with timeout
     # with subprocess.Popen(["stdbuf", "-oL", "sh", "./scripts/run-spike.sh", test_name], cwd=gemmini_path, 
@@ -175,6 +187,27 @@ def run_spike(code_contents: str, return_dict: dict, gemmini_path: pathlib.Path,
     #     return "Timeout"
     # if p.returncode != 0:
     #     return str(p.stdout)
+
+    # Python-side correctness check for harnesses that dump their output and
+    # reference a stored gold file ("// GOLD_FILE: <path>"). The harness prints
+    # the dump plus "Correct result"; we verify the dump and patch the verdict.
+    if "GOLD_BEGIN" in spike_output and "// GOLD_FILE:" in code_contents:
+        gold_path = code_contents.split("// GOLD_FILE:", 1)[1].splitlines()[0].strip()
+        try:
+            golden = pathlib.Path(gold_path).read_text().split()
+            dumped = re.findall(r"\b[0-9a-fA-F]{8}\b",
+                                spike_output.split("GOLD_BEGIN", 1)[1].split("GOLD_END", 1)[0])
+            head = spike_output.split("GOLD_BEGIN", 1)[0]
+            tail = spike_output.split("GOLD_END", 1)[1] if "GOLD_END" in spike_output else ""
+            logger.info("GOLD check: dumped=%d golden=%d eq=%s tail_has=%s",
+                        len(dumped), len(golden), dumped == golden, "Correct result" in tail)
+            if dumped == golden and "Correct result" in tail:
+                spike_output = head + tail
+            else:
+                spike_output = head + tail.replace("Correct result", "Incorrect result")
+        except Exception as e:
+            logger.warning("GOLD check failed: %r", e)
+            spike_output = spike_output.replace("Correct result", "Incorrect result")
 
     # return output
     return_dict["retval"] = spike_output
@@ -273,6 +306,38 @@ def run_firesim(code_contents_lst: list[str], gemmini_path: pathlib.Path, firesi
 
     return results
 
+def mx_cycle_phase_hint(code_str: str) -> list:
+    """Static cycle-phase bottleneck hint for an MX kernel candidate (marker-free).
+
+    autocomp only optimizes accelerator code, so the actionable signal is WHICH phase
+    dominates: CPU host staging (memcpy / nested scalar copy loops), accelerator data
+    movement (mvin), or compute (loop_ws_spad). On the MX kernels the dominant cost is
+    usually host staging, so flag it loudly and point at the fix (strided mvin from DRAM)."""
+    import re as _re
+    src = code_str
+    mvin = len(_re.findall(r'gemmini_(?:extended_)?mvin\w*\s*\(', src))
+    compute = len(_re.findall(r'gemmini_(?:loop_ws_spad|compute_\w+|mx_read_smem)\s*\(', src))
+    memcpy = len(_re.findall(r'\b(?:memcpy|memmove)\s*\(', src))
+    # nested scalar-copy loops that stage data on the host (A_buf[..]=.., O_acc[..]+=.. etc.)
+    stage_loops = len(_re.findall(r'\bfor\s*\([^;]*;[^;]*;[^)]*\)\s*(?:\{[^}]*)?[A-Za-z_]\w*\s*\[[^\]]*\]\s*[-+]?=', src))
+    hints = []
+    if memcpy or stage_loops >= 3:
+        hints.append(
+            f"CPU/host data staging detected ({memcpy} memcpy, ~{stage_loops} scalar copy loops). "
+            "Host staging is typically the dominant cost on this accelerator and autocomp cannot "
+            "speed it up directly: mvin tiles STRIDED straight from the source DRAM arrays instead "
+            "of copying through a host buffer, and keep partial sums in shared memory (bf16 accumulate) "
+            "rather than accumulating on the CPU.")
+    if mvin and compute and mvin > 4 * compute:
+        hints.append(
+            f"Data movement appears to dominate ({mvin} mvin vs {compute} compute launches). "
+            "Raise operand reuse: load each operand tile once and reuse across the inner loops, "
+            "or fuse tiles so more compute happens per mvin.")
+    if not hints:
+        hints.append("Accelerator-bound: compute and data-movement look balanced; tune tiling / "
+                     "scratchpad occupancy for more overlap.")
+    return hints
+
 def parse_spad_acc_utilization(spike_output: str, pe_dim: int, spad_size_kb: int, acc_size_kb: int) -> int:
     """
     Parse the output of the spike simulator to extract the spad utilization.
@@ -344,10 +409,16 @@ class GemminiEvalBackend(EvalBackend):
         return f"GemminiEvalBackend({self.pe_dim})"
 
     def get_hw_feedback(self, prob: Prob, code_strs: list[str]) -> list[list[str]]:
-        """Return per-implementation spad/acc utilization feedback strings."""
+        """Per-implementation feedback: spad/acc utilization + a static cycle-phase hint.
+
+        The cycle-phase hint (mx_cycle_phase_hint) reads the candidate's structure to flag
+        the dominant bottleneck class on the MX accelerator — CPU host-side data staging vs
+        accelerator data movement (mvin) vs compute — since autocomp only optimizes the
+        accelerator code and the biggest MX wins come from cutting host staging (the tiled
+        GEMM baselines were ~98.8% CPU staging, profiled via mx_pipeline/profile.py)."""
         stats_list = self.get_spad_acc_utilization(prob, code_strs)
         feedback_per_impl = []
-        for stats in stats_list:
+        for stats, code_str in zip(stats_list, code_strs):
             spad_cap_used = round(stats['spad_util'] * self.spad_size_kb)
             acc_cap_used = round(stats['acc_util'] * self.acc_size_kb)
             feedback = [
@@ -358,6 +429,7 @@ class GemminiEvalBackend(EvalBackend):
                 feedback[0] += " Consider increasing scratchpad utilization to improve performance."
             if stats['acc_util'] < 1:
                 feedback[1] += " Consider increasing accumulator utilization to improve performance."
+            feedback.extend(mx_cycle_phase_hint(code_str))
             feedback_per_impl.append(feedback)
         return feedback_per_impl
 
@@ -401,7 +473,7 @@ class GemminiEvalBackend(EvalBackend):
         clean_code_strs = [clean_code(code_str) for code_str in code_strs]
         for test_i, test in enumerate(prob.tests):
             logger.info("Running spike on %d implementations", len(code_strs))
-            test_output_per_code_str = run_spike_mp([test.get_test_code([code_str]) for code_str in clean_code_strs], self.gemmini_path, timeout=3000)
+            test_output_per_code_str = run_spike_mp([test.get_test_code([code_str]) for code_str in clean_code_strs], self.gemmini_path, timeout=120)
             num_compile_errors = 0
             num_correct = 0
             num_incorrect = 0
@@ -421,6 +493,17 @@ class GemminiEvalBackend(EvalBackend):
                     if simulator == "spike": # Get instruction count from spike
                         if "Generated implementation latency" in test_output:
                             sol_latency = int(test_output.split("Generated implementation latency: ")[-1].split(" cycles")[0])
+                            stats[code_i]["latency_spike_raw"] = sol_latency
+                            # MX_NOFPU_COST: the host Rocket in RadianceGemminiOnlyConfig has NO FPU
+                            # (fpu=None); float ops TRAP on real RTL (verified: fpu_probe FAILED on VCS)
+                            # but spike has an FPU and runs them ~1 cyc/op, so spike UNDER-counts float.
+                            # Penalize host float so the optimizer prefers float-free (deployable) kernels.
+                            if os.environ.get("MX_NOFPU_COST"):
+                                nflt = _count_host_float_ops(clean_code_strs[code_i])
+                                # float traps on this HW -> a float-using kernel is non-deployable;
+                                # use a disqualifying per-occurrence penalty (not a calibrated per-op cost).
+                                penalty = int(os.environ.get("MX_FLOAT_PENALTY", "100000000"))
+                                sol_latency = sol_latency + penalty * nflt
                             stats[code_i]["latency"] = sol_latency
                     num_correct += 1
                 else:
