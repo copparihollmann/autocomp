@@ -727,3 +727,13 @@ difftest unaffected (timing-only change, functional values unchanged). Levers RU
 issue_width (warp scheduler enabled=false -> all eligible issue, no throttle), execute
 completions_per_cycle (no effect), icache hit bytes_per_cycle (no effect); execute base_latency
 reduction is only PARTIAL (633k->450k, can't reach 294k -> confirms it's overlap/ILP, not latency).
+
+### attention seq128 (prob7) FIXED — row-parallel (RTL-legal + correct)
+Dense flash/naive at seq=128 oversubscribe the 256 pool (8 warps/core: flash per_warp
+[42,41,41,40,23,23,23,23]=256). Fix = sol7_rowparallel (=sol7_best): one thread per row, 3 phases
+over global scratch; the outer loop bound (seq=128) idles warps 4-7 (tid>=128 -> 0 iters), so only 4
+warps are register-active -> per_warp [40,39,37,36,18,18,18,18]=224<256 LEGAL, isa-test passed.
+Trade-off: 4 warps active -> slow (cyc 3.59M). RTL-gate impractical (3.59M cyc ~ hours to VCS-sim),
+but register-legal by the RTL-validated model + functionally correct (cyclotron==RTL via difftest).
+Faster 8-warp legal version would need cutting the softmax (mu_exp) phase by ~4 regs/warp so warps 0-3
+stay <=31 (naive 8-warp is [35,34,34,33,30,30,30,30]=256, 1 over) - future opt.
