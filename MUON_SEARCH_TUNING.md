@@ -6,7 +6,42 @@ don't chase wins the model is blind to. Companion to `MUON_SETUP.md` (how to run
 (findings ledger), `scripts/muon/HEURISTICS.md` (auto-generated transform ledger), and
 `chipyard/generators/radiance/cyclotron/MODELING_CHANGES.md` (the timing-model PR).
 
-Last validated: 2026-06-09.
+Last validated: 2026-06-10.
+
+---
+
+## Expanded problem suite (2026-06-10) — model2MLIR shape/op coverage
+
+The original 8 problems (0-7) were tiny tiles that didn't represent the dominant shapes/ops the
+10 model2MLIR models actually run (contractions ~43% of ops but tall-skinny + large-K; layer_norm
+759 ops + gelu 135 ops entirely missing; non-pow2 head dims; long seq). Added 5 runnable problems
+(all baselines verified PASS + RTL-legal under `--timing`):
+
+| # | op / shape | source | baseline cyc | autocomp-productive? |
+|---|---|---|---|---|
+| 8 | layer_norm 64×768 (+γ/β); mu_rsqrt (no sqrtf libcall) | smolvla ln 1×1024×768 | 4.95M | ✅ reduction (faithful) |
+| 9 | gelu 64×512, sigmoid-approx `x*sigmoid(1.702x)` via mu_exp | smolvla/pi05 gelu | 2.75M | ✅ elementwise (faithful) |
+| 10 | large-K matmul 64×64×**384** (A+B=192KB>SMEM → K-streaming) | smolvla 1024×768@768×768 | 688K | ⚠️ under-ranks SMEM |
+| 11 | attention seq96 **head_dim=72** (non-pow2) | pi05 16×256×72 | 1.18M | ⚠️ |
+| 13 | tall-skinny matmul **M=8** K=256 N=768 (underutilization) | tiny_llama 8×2048 | 3.49M | ⚠️ |
+
+Mechanics: `scripts/muon/gen_harnesses.py` `PROBLEMS` dict → renders `test{N}.cpp`; per-problem
+`gen_data.py` (FP-matched golden), `sol{N}_baseline.cpp`, `context{N}.md`. `mu_rsqrt` and `mu_exp`
+live in the harness `extra` (no libm).
+
+**Findings while building (both real, documented):**
+- **prob12 (long-seq attention, seq>128) is register-INFEASIBLE.** seq=192/256 baselines (naive
+  3-phase AND row-parallel, even with `#pragma GCC unroll 1`) all land at exactly **256 distinct
+  regs** = the 8-warp pool limit → `globalOverSubscription`. seq=128 (prob7) is the ceiling. The
+  register-distinct-count grows with loop trip count (more executed bodies → more distinct rd's);
+  whether this over-counts vs RTL (which renames cyclically) is unverified. **prob7 already covers
+  the flash/SMEM-cliff regime**, so prob12 was dropped from the active set.
+- **prob10 at K=768 hit a cyclotron functional bug** — exactly one contiguous 128-output block
+  (2 rows) is flat-wrong (fails even at 10% tolerance; golden f32-vs-f64 max_rel 3e-4, so golden is
+  fine). Only at large K (K=256/384 pass; K=768 fails) → smells like a functional issue on the
+  ~49K-element global arrays. Filed; prob10 uses K=384 (still forces K-streaming).
+
+`gen_harnesses.py PROBLEMS` now = {0,1,2,3,4,5,8,9,10,11,13} (6/7 hand-added, 12 dropped).
 
 ---
 

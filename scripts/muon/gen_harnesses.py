@@ -95,6 +95,18 @@ static inline float mu_exp(float x) {
   return p * s.f;
 }"""
 
+MU_RSQRT = """// fp32 reciprocal-sqrt (no libm/sqrtf libcall on this toolchain): fast-inverse-sqrt seed
+// + 3 Newton iters (~1e-6 rel). layer_norm golden uses exact 1/sqrt; tolerance covers the residual.
+static inline float mu_rsqrt(float x) {
+  union { float f; uint32_t i; } u; u.f = x;
+  u.i = 0x5f3759dfu - (u.i >> 1);
+  float y = u.f;
+  y = y * (1.5f - 0.5f * x * y * y);
+  y = y * (1.5f - 0.5f * x * y * y);
+  y = y * (1.5f - 0.5f * x * y * y);
+  return y;
+}"""
+
 PROBLEMS = {
     0: dict(
         desc="fp32 matmul C[M,N] = A[M,K] @ B[K,N]",
@@ -158,6 +170,56 @@ PROBLEMS = {
         init="x_raw, out_raw, ROWS, COLS",
         count="ROWS * COLS",
         out="out_raw",
+    ),
+    8: dict(
+        desc="layer_norm OUT[r,:] = (IN[r,:]-mean)/sqrt(var+eps)*gamma+beta (fp32, 64x768)",
+        tol="1.0e-3",
+        tol_abs="2.0e-4",
+        extra=MU_RSQRT,  # mu_rsqrt (no sqrtf libcall)
+        args="  __global float *in, *gamma, *beta, *out;\n  uint32_t rows, cols;",
+        init="x_raw, gamma_raw, beta_raw, out_raw, ROWS, COLS",
+        count="ROWS * COLS",
+        out="out_raw",
+    ),
+    9: dict(
+        desc="GELU C[m,n] = x * sigmoid(1.702*x) (fp32 sigmoid-approx, 64x512)",
+        tol="1.0e-3",
+        tol_abs="2.0e-4",
+        extra=MU_EXP,
+        args="  __global float *A, *C;\n  uint32_t M, N;",
+        init="A_raw, C_raw, M, N",
+        count="M * N",
+        out="C_raw",
+    ),
+    10: dict(
+        desc="large-K matmul C[M,N]=A[M,K]@B[K,N] (fp32, 64x64x768; K>SMEM forces K-streaming)",
+        tol="1.0e-3",  # K=768 fma-vs-numpy accumulation drift > 1e-4
+        tol_abs="1.0e-4",
+        extra="",
+        args="  __global float *A, *B, *C;\n  uint32_t M, N, K;",
+        init="A_raw, B_raw, C_raw, M, N, K",
+        count="M * N",
+        out="C_raw",
+    ),
+    11: dict(
+        desc="single-head attention O=softmax(QK^T/sqrt(d))V (fp32, seq 96, head_dim 72 non-pow2)",
+        tol="2.0e-4",
+        tol_abs="1.0e-5",
+        extra="__global float scratch_raw[SEQ * SEQ];\n\n" + MU_EXP,
+        args="  __global float *Q, *K, *V, *O, *scratch;\n  uint32_t seq, d;",
+        init="q_raw, k_raw, v_raw, o_raw, scratch_raw, SEQ, HEAD_DIM",
+        count="SEQ * HEAD_DIM",
+        out="o_raw",
+    ),
+    13: dict(
+        desc="tall-skinny matmul C[M,N]=A[M,K]@B[K,N] (fp32, M=8 K=256 N=768; underutilization)",
+        tol="1.0e-4",
+        tol_abs="1.0e-5",
+        extra="",
+        args="  __global float *A, *B, *C;\n  uint32_t M, N, K;",
+        init="A_raw, B_raw, C_raw, M, N, K",
+        count="M * N",
+        out="C_raw",
     ),
 }
 
