@@ -1,0 +1,13 @@
+agent_name: muon
+version: '1.0'
+built_at: '2026-06-04T03:27:42+00:00'
+build:
+  main_model: us.anthropic.claude-sonnet-4-6
+  light_model: us.anthropic.claude-sonnet-4-6
+  agent_scope: 'Optimizing fp32 SIMT compute kernels (matmul, conv2d, attention, softmax, swiglu) for the radiance Muon GPU:
+    one threadblock of 2 cores x 4 warps x 16 lanes, 128 KiB shared memory, kernels written in C++ with mu_schedule/mu_barrier/mu_exp
+    intrinsics'
+  sources:
+  - type: directory
+    path: agent_sources/muon
+description: Auto-generated agent config for muon

@@ -328,6 +328,7 @@ class SearchStrategy:
         early_stop_threshold: float = 1.0,
         continue_from: str | pathlib.Path | None = None,
         use_edits: bool = False,
+        extra_seed_codes: list[tuple[str, str]] | None = None,
     ):
         self.repository = CodeRepository()  # Stores the code candidates
         self.agent = agent  # The agent used to propose optimizations (planning)
@@ -335,6 +336,10 @@ class SearchStrategy:
             code_agent if code_agent is not None else agent
         )  # The agent used for code implementation
         self.use_edits = use_edits
+        # Extra hand-tuned / prior-winner kernels to inject as additional iteration-0 candidates
+        # (list of (code, plan_description)). They warm-start the beam so it optimizes ON TOP of
+        # known-good kernels instead of rediscovering them. Each is evaluated; only correct ones are kept.
+        self.extra_seed_codes = extra_seed_codes or []
         self.prob = prob
         self.problem = prob.name if hasattr(prob, "name") else str(prob)
         self.plan_models = sorted(
@@ -411,6 +416,20 @@ class SearchStrategy:
             self.repository.add_candidates(
                 [orig_code_candidate], 0
             )  # Add the initial code as the first candidate
+            # Inject extra hand-tuned / prior-winner seeds as additional iteration-0 candidates.
+            for seed_idx, (seed_code, seed_plan) in enumerate(self.extra_seed_codes):
+                seed_cand = CodeCandidate(None, seed_plan, seed_code)
+                seed_eval_dir = self.output_dir / f"eval-results-iter-0-seed-{seed_idx}"
+                seed_eval_dir.mkdir(parents=True, exist_ok=True)
+                self.evaluate_candidates(
+                    [seed_cand], self.metric, save_dir=seed_eval_dir, use_cache=False,
+                )
+                if seed_cand.score == float("inf"):
+                    logger.warning("Extra seed %d (%s) failed eval; skipping.", seed_idx, seed_plan)
+                    continue
+                self.add_feedback([seed_cand])
+                self.repository.add_candidates([seed_cand], 0)
+                logger.info("Injected extra seed %d (%s), score=%s", seed_idx, seed_plan, seed_cand.score)
             self.repository.save_candidates(0, save_dir)
         initial_code_candidates: list[CodeCandidate] = self.repository.get_candidates(0)
         logger.info("Initial code scores:")
@@ -942,6 +961,7 @@ class BeamSearchStrategy(SearchStrategy):
         continue_from: str | pathlib.Path | None = None,
         use_edits: bool = False,
         skip_planning: bool = False,
+        extra_seed_codes: list[tuple[str, str]] | None = None,
     ):
         self.num_analyses = num_analyses
         self.num_plan_candidates = num_plan_candidates
@@ -979,6 +999,7 @@ class BeamSearchStrategy(SearchStrategy):
             early_stop_threshold=early_stop_threshold,
             continue_from=continue_from,
             use_edits=use_edits,
+            extra_seed_codes=extra_seed_codes,
         )
         self.init_wandb()
 

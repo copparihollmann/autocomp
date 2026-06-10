@@ -1,0 +1,7 @@
+strategies:
+- strategy: Convert high-level code to hardware-specific kernel code
+- strategy: Translate the remaining high-level code to hardware-specific kernel code
+- strategy: Replace `expf`/`exp` calls with `mu_exp(float)` or `mu_fexp`/`mu_fnexp` for fp16 exponential intrinsics.
+- strategy: Map shared memory reads/writes to `load32_shared`/`load16_shared`/`store_shared` intrinsics with SMEM base address
+    `0x0000_0000`.
+- strategy: Replace barrier/synchronization points with `mu_barrier(barrier_id, num_warps)` and memory fences with `mu_fence()`/`mu_fence_smem()`.

@@ -1,0 +1,35 @@
+optimizations:
+- strategy: reduce data movement
+- strategy: overlap data movement and compute
+- strategy: cache reused data in local memory instead of reloading from main memory
+- strategy: loop tiling
+- strategy: loop reordering and restructuring
+- strategy: loop unrolling
+- strategy: fuse operations
+- strategy: use lower precision
+- strategy: double buffering
+- strategy: software pipelining
+- strategy: hoist redundant operations out of loops
+- strategy: eliminate redundant computation
+- strategy: simplify or remove unnecessary code
+- strategy: try new parameter values
+- strategy: rewrite the algorithm to reduce total work
+- strategy: stage global loads into `__shared` memory before compute to enable warp reuse
+- strategy: use `mu_fence_smem()` only once per tile boundary, not inside inner loops
+- strategy: minimize `mu_barrier()` calls by merging load and compute phases where possible
+- strategy: pack two fp32 values into uint32 shared memory slots to halve smem bandwidth
+- strategy: assign contiguous thread IDs to contiguous memory addresses for coalesced global loads
+- strategy: exploit 128 KiB shared memory by staging multiple K-tiles to reduce barrier frequency
+- strategy: use ILP by loading multiple elements per thread before writing to shared memory
+- strategy: batch global writes by accumulating into registers and storing once per output tile
+- strategy: tile across both M and N dimensions per thread to increase register reuse
+- strategy: assign blocks to threadblock_id stripes to maximize L1/shared reuse across cluster
+- strategy: use `__local` pointers at address 0 for zero-overhead shared memory addressing
+- strategy: precompute global index arithmetic outside inner loops to reduce per-iteration overhead
+- strategy: unroll inner K-loop over BK to expose instruction-level parallelism across lanes
+- strategy: split warp work so each warp owns a disjoint smem region, eliminating false sharing
+- strategy: use separate load and compute phases with a single barrier between them per tile
+- strategy: accumulate in fp32 registers across the full K dimension before writing back to global memory
+- strategy: size thread tiles (TM x TN) to maximize register occupancy without spilling on 16-lane warps
+- strategy: interleave A and B smem loads across threads to balance memory port utilization
+- strategy: stage into shared memory ONLY operands reused many times (matmul/attention tiles); never stage data read once (e.g. conv patch-embed im2col-once), which adds load+store+barrier overhead with no reuse payoff

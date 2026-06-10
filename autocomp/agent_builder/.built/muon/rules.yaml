@@ -1,0 +1,39 @@
+general:
+- The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.
+- Keep the same function name and signature as the original program (helper functions can be renamed or deleted).
+- Never use expf() or exp() for exponentials; always use mu_exp(float) for fp32 or mu_fexp/_Float16 for fp16. Using expf/exp
+  will cause a compile or link error.
+- mu_barrier(barrier_id, num_warps) must receive the total warp count across both cores (8 warps for a full threadblock with
+  NUM_WARPS=4), not per-core warp count. Passing the wrong num_warps causes incorrect synchronization and silently wrong results
+  or deadlocks.
+- Never place mu_barrier() inside a warp-divergent branch (e.g., guarded by tid-dependent conditions) without an explicit
+  else { asm volatile("nop"); } clause. The compiler may duplicate the barrier into both branch paths, causing deadlocks.
+- Shared memory is at base address 0x00000000 and is 128 KiB total per cluster. Accessing beyond this range corrupts other
+  memory-mapped regions (e.g., Gemmini MMIO at 0x00084000), causing undefined behavior or hardware faults.
+planning:
+- Limit the scope of the plan to the selected strategy.
+- Do not count out any of the strategies unless they are clearly irrelevant to the code.
+- 'The threadblock always has exactly 128 threads: 2 cores x 4 warps x 16 lanes. tid_in_threadblock is 0..127, warp_id = tid/16,
+  lane_id = tid%16. Any algorithm partitioning that assumes a different thread count will produce incorrect results.'
+- Shared memory intrinsics (store_shared, load32_shared, load16_shared) must be used for SMEM accesses; using regular pointer
+  dereferences to address 0 without __local qualification may not correctly target SMEM, causing wrong results or faults.
+- Do not plan to use mxgemmini/tensor instructions in SIMT kernels; they are not available to SIMT code and will cause a compile
+  or runtime error.
+coding:
+- Wrap the generated code with ``` at the beginning and ``` at the end.
+- The kernel entry point must be defined as exactly 'static inline void kernel_body(void* raw_arg, uint32_t tid_in_threadblock,
+  uint32_t threads_per_threadblock, uint32_t threadblock_id)'. Any deviation in signature causes a compile error or the harness
+  will fail to launch the kernel correctly.
+- KernelArgs must not be redefined in the kernel; it is defined by the harness. Redefining it causes a compile error or type
+  mismatch leading to incorrect buffer pointer interpretation.
+- When using store_shared/load32_shared, the offset argument to store_shared is an immediate (I-type), not a register; computed
+  offsets must be added to the base address before the call, not passed as the offset parameter, otherwise incorrect addresses
+  are accessed.
+- Do not call mu_barrier() or mu_fence_smem() from within conditionally-executed code paths that are not uniformly taken by
+  all threads in the threadblock; this causes deadlocks or missed synchronization leading to data races and silently wrong
+  results.
+- Pointers from KernelArgs are address-space qualified; always assign to __global float* (never const float*),
+  e.g. const __global float* a = args->A;
+- Do not include extra files; the kernel must be one fenced code block defining kernel_body.
+- "SMEM has 4 banks of 64-byte lines; per-lane address stride 64B is conflict-free. Pad SMEM tiles by +16 floats per row to avoid 16-way conflicts."
+- "SMEM has no fences in cyclotron; synchronize warps with one mu_barrier."

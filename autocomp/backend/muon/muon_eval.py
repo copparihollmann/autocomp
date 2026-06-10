@@ -24,7 +24,8 @@ CYCLOTRON_CONFIG = pathlib.Path(
     "/scratch/agustin/projects/autocomp/scripts/muon/config_muon.toml")
 
 COMPILE_TIMEOUT = 120
-SIM_TIMEOUT = 700
+SIM_TIMEOUT = 180  # wall cap; cyclotron self-terminates at config timeout=10M cyc (~90s, ~3x slowest baseline)
+FUNC_TIMEOUT = 60  # functional-only correctness gate (no --timing) — fast; catches wrong/illegal/loops
 
 # RTL physical-register budget: the RadianceSingleClusterConfig core has
 # numPhysRegs=256 shared across numWarps=8 always-active warps, so a kernel using N
@@ -88,7 +89,8 @@ class MuonEvalBackend(EvalBackend):
 
     def harness_overhead(self, prob: Prob) -> int:
         if prob.prob_id not in self._overhead:
-            _, cycles = self._run_one(prob, prob.tests[0], EMPTY_KERNEL, 0)
+            _, cycles, _ = self._run_one(prob, prob.tests[0], EMPTY_KERNEL, 0,
+                                         measure_overhead=True)
             self._overhead[prob.prob_id] = cycles or 0
             logger.info("muon eval: harness overhead for prob %s = %s cycles",
                         prob.prob_id, self._overhead[prob.prob_id])
@@ -115,17 +117,33 @@ class MuonEvalBackend(EvalBackend):
         stats = [{"correct": True, "test_results": {}} for _ in code_strs]
         for test_i, test in enumerate(prob.tests):
             for code_i, code_str in enumerate(code_strs):
-                ok, latency = self._run_one(prob, test, clean_code(code_str), code_i)
+                ok, latency, feedback = self._run_one(
+                    prob, test, clean_code(code_str), code_i)
                 stats[code_i]["test_results"][test_i] = ok
                 stats[code_i]["compiled"] = latency is not None or ok
                 if not ok:
                     stats[code_i]["correct"] = False
+                    # Carry a per-failure diagnostic so the search can REIMPLEMENT with
+                    # context (search.py reimplement_failed reads candidate.stderr) instead
+                    # of treating every failure as an opaque score=inf dead-end.
+                    if feedback:
+                        stats[code_i]["stderr"] = feedback
                 if latency is not None and ok:
                     stats[code_i]["latency"] = max(latency - self.harness_overhead(prob), 1)
         return stats
 
-    def _run_one(self, prob, test, code_str, code_i):
-        """Returns (correct, latency)."""
+    def _run_one(self, prob, test, code_str, code_i, measure_overhead=False):
+        """Returns (correct, latency, feedback).
+
+        Two-phase eval: a cheap functional-only run (no --timing) gates correctness +
+        RTL register-legality; the expensive timed run is done ONLY for correct candidates
+        (to read cycles). Wrong/illegal/looping candidates never pay the timed-sim cost.
+        `feedback` is a specific diagnostic string on failure (else None).
+
+        `measure_overhead=True` (used only for the EMPTY_KERNEL harness-overhead baseline)
+        skips the correctness gate — the empty kernel intentionally computes no output and
+        would 'fail' verification, but we still want its timed cycle count (data setup +
+        launch + verify loop) to subtract from real candidates."""
         harness_dir = HARNESSES_DIR / prob.prob_type / f"test{prob.prob_id}"
         work = RADIANCE_KERNELS / f"autocomp_eval_p{prob.prob_id}_c{code_i}"
         work.mkdir(parents=True, exist_ok=True)
@@ -141,11 +159,11 @@ class MuonEvalBackend(EvalBackend):
             )
         except subprocess.TimeoutExpired:
             logger.info("muon eval: compile timeout (code %d)", code_i)
-            return False, None
+            return False, None, "COMPILE TIMEOUT: the kernel took too long to compile."
         if res.returncode != 0:
             logger.info("muon eval: compile error (code %d): %s",
                         code_i, res.stderr[-2000:])
-            return False, None
+            return False, None, f"COMPILE ERROR:\n{res.stderr[-1500:]}"
 
         # Register-pressure metric (LOGGED, not a hard reject). The static distinct-
         # register count is NON-MONOTONIC with RTL legality (softmax unroll8 @50 regs
@@ -160,35 +178,70 @@ class MuonEvalBackend(EvalBackend):
                             "(advisory; not rejected — static count can't predict RTL "
                             "globalOverSubscription)", code_i, nregs)
 
+        elf = str(work / "kernel.radiance.elf")
+        base_cmd = [str(CYCLOTRON_BIN), str(CYCLOTRON_CONFIG), "--binary-path", elf, "--log", "0"]
+
+        # Phase 1: functional-only correctness gate (no --timing). Fast (no timing model);
+        # produces the same "isa-test passed"/"case=N" verdict and the same RTL register
+        # panic. Wrong/illegal/looping candidates are rejected here without the timed cost.
+        # (Skipped for the EMPTY_KERNEL overhead baseline, which has no correct output.)
+        if not measure_overhead:
+            try:
+                func = subprocess.run(
+                    base_cmd, cwd=work, capture_output=True, text=True,
+                    timeout=FUNC_TIMEOUT, env={"RUST_LOG": "error"},
+                )
+            except subprocess.TimeoutExpired:
+                logger.info("muon eval: functional timeout (code %d)", code_i)
+                return False, None, ("FUNCTIONAL TIMEOUT: kernel did not terminate (hit the 10M-cycle "
+                                     "cap). Likely an unbounded loop or far too much work per thread.")
+            fout = func.stdout + func.stderr
+            if "globalOverSubscription" in fout:
+                logger.info("muon eval: RTL-ILLEGAL register oversubscription (code %d) — "
+                            "rejected (would $fatal on RadianceSingleClusterConfig)", code_i)
+                return False, None, ("RTL-ILLEGAL: register oversubscription (>256 distinct regs across "
+                                     "8 warps). Cut outputs-per-thread / accumulators / #pragma unroll; "
+                                     "use one accumulator and a single incrementing pointer.")
+            if "isa-test passed" not in fout:
+                mfail = re.search(r"case=(\d+)", fout)
+                errs = mfail.group(1) if mfail else "?"
+                logger.info("muon eval: FAIL (code %d): %s errors", code_i, errs)
+                return False, None, (f"INCORRECT: {errs} lane(s) wrong vs golden. Check the cross-core "
+                                     "barrier (mu_barrier(0, total_warps) AFTER the schedule), per-phase "
+                                     "barriers (mu_barrier(1, nw)) between SMEM produce/consume, and the "
+                                     "thread->output mapping derived from threads_per_threadblock (not a "
+                                     "literal warp count). Gold accumulates sequentially (FP order).")
+
+        # Phase 2: timed run — AUTHORITATIVE for both correctness and cycles. The functional
+        # gate above is only a fast pre-filter; some failures are TIMING-DEPENDENT and pass
+        # functionally but fail here — e.g. a cross-core SMEM race (mu_barrier ID 1 = per-core
+        # vs ID 0 = cross-core) or a host-verify/write-drain race. Functional SMEM is instantly
+        # coherent, so it can't see these; the timed model can. Must re-check correctness here.
         try:
             sim = subprocess.run(
-                [str(CYCLOTRON_BIN), str(CYCLOTRON_CONFIG),
-                 "--binary-path", str(work / "kernel.radiance.elf"),
-                 "--timing", "--log", "0"],
-                cwd=work, capture_output=True, text=True, timeout=SIM_TIMEOUT,
-                env={"RUST_LOG": "error"},
+                base_cmd + ["--timing"], cwd=work, capture_output=True, text=True,
+                timeout=SIM_TIMEOUT, env={"RUST_LOG": "error"},
             )
         except subprocess.TimeoutExpired:
-            logger.info("muon eval: simulation timeout (code %d)", code_i)
-            return False, None
-
+            logger.info("muon eval: timed-sim timeout (code %d) — correct but too slow", code_i)
+            return False, None, ("TOO SLOW: correct functionally, but the timed sim exceeded the wall "
+                                 "cap (far slower than baseline). Likely 16-way SMEM bank-conflict "
+                                 "serialization (pad column stride +16 floats) or excessive global "
+                                 "memory traffic. Reduce serialization; keep the algorithm.")
         out = sim.stdout + sim.stderr
-        # Cyclotron now models the RTL Rename physical-register pool at runtime
-        # (MuonCore::track_register_pressure). An RTL-illegal kernel panics with
-        # globalOverSubscription exactly as Rename.scala:123 asserts — reject it as a
-        # failed candidate so the search never proposes register-tiled kernels that
-        # would $fatal on hardware.
-        if "globalOverSubscription" in out:
-            logger.info("muon eval: RTL-ILLEGAL register oversubscription (code %d) — "
-                        "rejected (would $fatal on RadianceSingleClusterConfig)", code_i)
-            return False, None
-        passed = "isa-test passed" in out
-        cycles = None
-        m = re.findall(r"finished after (\d+) cycles", out)
-        if m:
-            cycles = int(m[-1])
-        if not passed:
+        if "isa-test passed" not in out:
             mfail = re.search(r"case=(\d+)", out)
-            logger.info("muon eval: FAIL (code %d): %s", code_i,
-                        f"{mfail.group(1)} errors" if mfail else out[-300:])
-        return passed, cycles
+            errs = mfail.group(1) if mfail else "?"
+            logger.info("muon eval: TIMING-FAIL (code %d): %s errors under --timing "
+                        "(passed functionally)", code_i, errs)
+            return False, None, (f"INCORRECT UNDER TIMING: {errs} lane(s) wrong with the timing model "
+                                 "(but correct functionally) => a TIMING-DEPENDENT race. Use "
+                                 "mu_barrier(0, total_warps) (ID 0 = CROSS-CORE) — not ID 1 (per-core) "
+                                 "— after staging into SMEM that other cores read, and mu_fence_smem() "
+                                 "before the cross-core barrier. Ensure all threadblock stores are "
+                                 "visible before any read across cores.")
+        m = re.findall(r"finished after (\d+) cycles", out)
+        cycles = int(m[-1]) if m else None
+        if cycles is None:
+            return False, None, "TIMED-SIM ERROR: no cycle count produced."
+        return True, cycles, None

@@ -12,7 +12,7 @@ io_cout_size = 64
 
 [sim]
 elf = "test/isa-tests/rv32ui-p-add"
-timeout = 80000000
+timeout = 10000000
 trace = false
 
 [timing]
