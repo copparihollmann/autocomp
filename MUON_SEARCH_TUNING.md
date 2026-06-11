@@ -10,6 +10,36 @@ Last validated: 2026-06-10.
 
 ---
 
+## Oracle fix (2026-06-10) — global-memory bandwidth model (Option 3)
+
+**Problem.** cyclotron under-ranked SMEM-tiling (matmul SMEM = 1.21× net vs RTL's 2.5×) because global
+loads hit the L0/L1 data nodes at **64 B/cyc** — effectively free — so the cache-resident naive matmul's
+3.27 MB of global traffic never became the bottleneck (issue-bound, latency hidden by 8 warps).
+
+**Fix (config-only, no Rust change).** Lower the global-cache **data-node bandwidth** to model real
+HW's finite global-memory bandwidth: `scripts/muon/config/timing/gmem.toml`, all three
+`[gmem.levels.data] bytes_per_cycle: 64 → 6`. This makes the naive matmul **global-bandwidth-bound**
+(net cycles scale with traffic) while SMEM-tiled stays **compute-bound** (flat) — exactly RTL's behavior.
+
+**Calibration (matmul naive/SMEM net ratio vs the global-BW knob):**
+| bw (B/cyc) | naive_net | smem_net | ratio |
+|---|---|---|---|
+| 64 (old) | ~63k | ~52k | 1.21× |
+| 16 | 57,082 | 42,888 | 1.33× |
+| 8 | 82,038 | 42,623 | 1.92× |
+| **6** | **103,838** | **42,717** | **2.43×** ✓ matches RTL ~2.5× |
+| 4 | 142,501 | 42,596 | 3.35× |
+
+**bw=6** picked to match the RTL-validated 2.5× matmul anchor. All baselines still PASS at bw=6
+(timing-only change — correctness/difftest unaffected; no eval timeouts): matmul/conv/softmax/gelu fast,
+attn64 931k / layer_norm 1.3M (memory-bound now = realistic). **Caveat:** calibrating to RTL bandwidth
+is *faithful* — it reveals memory-class wins (SMEM tiling) but, on now-memory-bound kernels
+(attn/layer_norm), may mask pure-compute tweaks that don't reduce traffic. That's correct iff it mirrors
+RTL. (Pending: a clean RTL naive-vs-SMEM gate to confirm the exact target; re-running the search at bw=6
+to confirm the cheap search now *discovers* SMEM-tiling on its own.)
+
+---
+
 ## Expanded problem suite (2026-06-10) — model2MLIR shape/op coverage
 
 The original 8 problems (0-7) were tiny tiles that didn't represent the dominant shapes/ops the
