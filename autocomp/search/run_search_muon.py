@@ -46,7 +46,10 @@ def main():
     # Models
     # ------------------------------------------------------------------
     models = [
-        "aws::us.anthropic.claude-sonnet-4-6",
+        # Gemini 3.1 Pro Preview (provider gcp, auto-detected): separate provider from AWS
+        # Bedrock => dodges the daily-token throttle; ~$2/$12 per 1M (cost-tracked, counts to cap).
+        "gemini-3.1-pro-preview",
+        # "aws::us.anthropic.claude-sonnet-4-6",  # Sonnet 4.6 (Bedrock; daily-token throttled)
     ]
     code_models = None  # None = same as planning models
 
