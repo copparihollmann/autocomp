@@ -49,6 +49,22 @@ _PRICES_PER_M = {
     "sonnet": {"in": 3.0, "out": 15.0, "long_in": 6.0, "long_out": 22.5},
     "opus":   {"in": 5.0, "out": 25.0},
     "haiku":  {"in": 1.0, "out": 5.0},
+    # --- Google Gemini (AI Studio, Standard tier; long-context tier = prompts > 200k).
+    # 3.1 Pro Preview Standard: $2/$12 (<=200k), $4/$18 (>200k). Output price includes
+    # thinking tokens. (Flex/Batch tiers are ~half but use a different API path.) ---
+    "gemini-3.1-pro": {"in": 2.0, "out": 12.0, "long_in": 4.0, "long_out": 18.0},
+    "gemini-2.5-pro": {"in": 1.25, "out": 10.0, "long_in": 2.5, "long_out": 15.0},
+    # Flash tiers (output incl thinking). Conservative-HIGH estimates so cost is never
+    # under-tracked and the spend cap triggers safely; verify against AI Studio if exact
+    # numbers matter. "gemini-3-flash" matches gemini-3-flash-preview (longest-substring).
+    "gemini-3.5-flash": {"in": 0.50, "out": 4.0, "long_in": 1.0, "long_out": 6.0},
+    "gemini-3-flash": {"in": 0.50, "out": 4.0, "long_in": 1.0, "long_out": 6.0},
+    "gemini-2.5-flash": {"in": 0.30, "out": 2.5, "long_in": 0.60, "long_out": 4.0},
+    "flash": {"in": 0.50, "out": 4.0},  # generic fallback for any other flash variant
+    # --- Qwen on Bedrock (ESTIMATE; conservative-HIGH so cost isn't under-tracked.
+    # qwen3-coder-480b-a35b is a 480B MoE coding model. Confirm vs AWS Bedrock pricing.) ---
+    "qwen3-coder": {"in": 1.5, "out": 7.0},
+    "qwen":        {"in": 0.80, "out": 3.5},
     # --- Amazon Nova (approximate; no long-context tier modeled) ---
     "nova-micro": {"in": 0.035, "out": 0.14},
     "nova-lite":  {"in": 0.06,  "out": 0.24},

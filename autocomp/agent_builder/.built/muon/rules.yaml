@@ -1,4 +1,18 @@
 general:
+- 'CROSS-CORE SMEM BARRIER (the #1 cause of silent failures): if ANY thread reads a shared-memory
+  location that a thread on the OTHER core wrote (i.e. any cooperative SMEM staging across the whole
+  128-thread threadblock), the barrier between the write and the read MUST be mu_barrier(0, nw) where
+  nw = threads_per_threadblock / MU_NUM_THREADS (barrier ID 0 = CROSS-CORE). mu_barrier(1, ...) is
+  PER-CORE only: it does NOT make core 0''s SMEM writes visible to core 1, so cross-core reads get
+  stale data. This PASSES functional sim but FAILS under timing / on RTL with wrong results. Use
+  ID 1 only for purely intra-core (single-core) staging. When unsure, use ID 0.'
+- 'REGISTER WALL (hard RTL limit): the 8 warps of a threadblock share one core''s 256 physical
+  registers (~32 distinct registers/warp, ~16 left for the kernel after the harness floor). Kernels
+  whose distinct (warp,rd) writes exceed 256 are REJECTED (globalOverSubscription, $fatal on RTL).
+  Avoid per-thread register tiling with many accumulators, deep #pragma unroll, and long unrolled
+  reduction loops (the distinct-register count grows with unrolled trip count). Prefer one accumulator
+  per output and a single incrementing pointer; for long sequences keep loops rolled (#pragma GCC
+  unroll 1 if needed).'
 - The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.
 - Keep the same function name and signature as the original program (helper functions can be renamed or deleted).
 - Never use expf() or exp() for exponentials; always use mu_exp(float) for fp32 or mu_fexp/_Float16 for fp16. Using expf/exp
@@ -36,4 +50,8 @@ coding:
   e.g. const __global float* a = args->A;
 - Do not include extra files; the kernel must be one fenced code block defining kernel_body.
 - "SMEM has 4 banks of 64-byte lines; per-lane address stride 64B is conflict-free. Pad SMEM tiles by +16 floats per row to avoid 16-way conflicts."
-- "SMEM has no fences in cyclotron; synchronize warps with one mu_barrier."
+- "Do NOT call mu_fence_smem() — it is unnecessary here and can make the timing sim fail to
+  terminate. A single mu_barrier (ID 0 for cross-core, see general rules) both synchronizes and
+  makes SMEM writes visible; that is sufficient."
+- "Map thread->output from threads_per_threadblock (0..127), never a literal warp/core count, or
+  kernels write out-of-bounds / wrong elements at the 8-warp config."

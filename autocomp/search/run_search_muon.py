@@ -46,12 +46,16 @@ def main():
     # Models
     # ------------------------------------------------------------------
     models = [
-        # Gemini 3.1 Pro Preview (provider gcp, auto-detected): separate provider from AWS
-        # Bedrock => dodges the daily-token throttle; ~$2/$12 per 1M (cost-tracked, counts to cap).
-        "gemini-3.1-pro-preview",
-        # "aws::us.anthropic.claude-sonnet-4-6",  # Sonnet 4.6 (Bedrock; daily-token throttled)
+        # HYBRID (proven on the MX-Gemmini target): plan on cheap off-AWS Flash, code on the SOTA
+        # coder. Flash proposes optimization directions; Qwen-480B writes the kernels.
+        "gcp::gemini-3.5-flash",
+        # "gemini-3.1-pro-preview",                 # Pro: stronger planner but ~6-10x pricier (thinking)
+        # "aws::us.anthropic.claude-sonnet-4-6",    # Sonnet 4.6 (Bedrock; daily-token throttled)
     ]
-    code_models = None  # None = same as planning models
+    # Code-gen on Qwen3-Coder-480B (Bedrock, separate quota => unthrottled). SOTA coder; drove
+    # 1.4-2.07x on MX-Gemmini where cheap models found nothing. (Muon caveat: cyclotron under-ranks
+    # SMEM, so its wins show only where the oracle is faithful — conv/attention compute, reg-tiling.)
+    code_models = ["aws::qwen.qwen3-coder-480b-a35b-v1:0"]
 
     # ------------------------------------------------------------------
     # Search (minimal smoke config)
