@@ -1,0 +1,2 @@
+cyc naive: PASS cycles=480918
+cyc smem:  PASS cycles=419797

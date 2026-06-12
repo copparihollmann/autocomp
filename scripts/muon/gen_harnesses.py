@@ -224,6 +224,11 @@ PROBLEMS = {
 }
 
 for n, p in PROBLEMS.items():
+    rendered = TEMPLATE.format(**p)
     path = ROOT / f"test{n}" / f"test{n}.cpp"
-    path.write_text(TEMPLATE.format(**p))
-    print(f"wrote {path}")
+    path.write_text(rendered)
+    # also write the flat test{n}.c — Prob.tests (autocomp/search/prob.py) globs this for the
+    # candidate substitution; muon_eval copies data/Makefile from the test{n}/ subdir.
+    flat = ROOT / f"test{n}.c"
+    flat.write_text(rendered)
+    print(f"wrote {path} + {flat}")

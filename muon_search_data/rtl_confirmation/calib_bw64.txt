@@ -1,0 +1,2 @@
+[bw64_compare] matmul naive=390953/PASS smem=381807/PASS (naive/smem=1.02x, want ~2.5) | attn base=582507/PASS smem=TIMEOUT (base/smem=-x, want >=1)
+RESTORED_BW6

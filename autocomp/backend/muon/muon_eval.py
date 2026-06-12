@@ -229,6 +229,11 @@ class MuonEvalBackend(EvalBackend):
                                  "serialization (pad column stride +16 floats) or excessive global "
                                  "memory traffic. Reduce serialization; keep the algorithm.")
         out = sim.stdout + sim.stderr
+        if measure_overhead:
+            # EMPTY_KERNEL has no correct output; we only want its cycle count (data setup +
+            # launch + verify loop) as the per-problem overhead baseline. Skip correctness.
+            m = re.findall(r"finished after (\d+) cycles", out)
+            return True, (int(m[-1]) if m else None), None
         if "isa-test passed" not in out:
             mfail = re.search(r"case=(\d+)", out)
             errs = mfail.group(1) if mfail else "?"

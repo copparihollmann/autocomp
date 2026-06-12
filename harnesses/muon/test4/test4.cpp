@@ -75,13 +75,6 @@ int main() {
     for (;;) {}
   }
 
-  // #25 write-drain fix: let the compute warps' global stores drain to memory before hart 0
-  // reads the outputs. Without this, small/fast kernels race (verify reads stale data -> false
-  // mismatches); slower kernels happen to drain in time. Validated on conv (RTL). Tunable.
-#ifndef DRAIN_ITERS
-#define DRAIN_ITERS 0u
-#endif
-  for (volatile uint32_t _d = 0; _d < DRAIN_ITERS; _d++) { asm volatile("" ::: "memory"); }
   uint32_t errors = 0;
   for (uint32_t i = 0; i < VERIFY_COUNT; i++) {
     if (!close_enough(C_raw[i], gold_raw[i])) errors++;

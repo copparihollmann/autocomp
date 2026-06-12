@@ -1,0 +1,1 @@
+[bw6_faithcheck] matmul naive=480993/PASS smem=419895/PASS (naive/smem=1.15x, want ~2.5) | attn base=1308959/PASS smem=TIMEOUT (base/smem=-x, want >=1)

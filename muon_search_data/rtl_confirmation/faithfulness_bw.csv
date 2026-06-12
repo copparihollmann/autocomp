@@ -1,0 +1,10 @@
+prob,label,bw,base_cyc,best_cyc,speedup
+1,conv_patchembed,bw6,102215,79286,1.29x
+1,conv_patchembed,bw64,102637,76867,1.34x
+5,softmax,bw6,509523,,-x
+5,softmax,bw64,418328,,-x
+8,layer_norm,bw6,5735899,5507821,1.04x
+8,layer_norm,bw64,4954788,4890866,1.01x
+9,gelu,bw6,3059220,3059220,1.00x
+9,gelu,bw64,2751881,2751881,1.00x
+RESTORED_BW6

@@ -221,3 +221,34 @@ GPU) → VCS `RadianceSingleClusterConfig` → PASS + `rtl_cycles = $finish_ps /
   from `threads_per_threadblock`, never a literal warp count.
 - **cyclotron absolute compute over-count ~1.34×** vs RTL (issue-bound model); ranking preserved for
   the faithful classes above.
+
+## RTL confirmation of bw=6 (Phase A, 2026-06-11)
+
+Built trace-free `RadianceSingleClusterFastConfig` (mirror of RadianceSingleClusterConfig,
+`trace=false, profiler=false`) so RTL gates run WITHOUT the cyclotron trace-sqlite spam that made
+the trace=true sim take ~90 min. Trace-free wall-time: ~25-28 min/kernel (700-840k RTL cycles),
+spam=0, $finish reached, EXIT=0. Tractable spot-check tool; cyclotron@bw6 stays the everyday oracle.
+
+Gated matmul naive (sol0_baseline) vs SMEM (sol0_smem_manual), same soc.elf, drain-matched:
+  RTL:             naive=843556 cyc  smem=726584 cyc  total_ratio=1.161  ($finish_ps/2000, 500MHz)
+  cyclotron@bw6:   naive=480918      smem=419797      total_ratio=1.146   (same .cpp kernels)
+  cyclotron@bw64:  naive=390953      smem=381807      total_ratio=1.02    (under-predicts RTL!)
+
+=> bw=6 reproduces the RTL total-cycle SMEM-vs-naive ratio to within 1.3% (1.146 vs 1.161),
+   whereas bw=64 under-predicted it (1.02x). The oracle fix is RTL-validated on TOTAL cycles
+   (the preferred metric; see memory "total cycles only").
+   Caveat on the headline "2.42x": that was a NET (fixed-overhead-subtracted) compute-region ratio.
+   End-to-end TOTAL speedup for this matmul shape is ~1.16x (rest is fixed host-launch/DRAM-fill
+   overhead SMEM-tiling can't remove). Both framings are consistent; report TOTAL.
+
+## Per-op faithfulness of bw=6 (Phase B, cyclotron, 2026-06-11)
+
+faithfulness_bw.sh: baseline vs discovered-best at bw6 AND bw64 (total cycles, run_problem.sh).
+  prob1 conv_patchembed: bw6 1.29x  | bw64 1.34x   -> compute win SURVIVES bw6 (faithful)
+  prob5 softmax:         best fails to produce cycles at BOTH bws -> kernel broken, bw-independent
+  prob8 layer_norm:      bw6 1.04x  | bw64 1.01x    -> ~no win either bw (nothing to mask)
+  prob9 gelu:            bw6 1.00x  | bw64 1.00x    -> best == baseline (no opt found)
+  matmul (prob0):        RTL-confirmed above
+  attn (calib):          smem-attn TIMEOUT at BOTH bw6 and bw64 -> pre-existing pathology, NOT a bw6 artifact
+=> No ranking flips between bw6 and bw64. bw=6 does not spuriously mask any detectable compute win;
+   every divergence is either a surviving win (conv) or a bw-independent failure. bw=6 is faithful.
