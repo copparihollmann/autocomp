@@ -455,9 +455,17 @@ def _extract_usage(provider: str, resp) -> dict:
                 usage["input_tokens"] = getattr(resp.usage, "input_tokens", 0) or 0
                 usage["output_tokens"] = getattr(resp.usage, "output_tokens", 0) or 0
         elif provider == "gcp":
-            if hasattr(resp, "usage_metadata") and resp.usage_metadata:
-                usage["input_tokens"] = getattr(resp.usage_metadata, "prompt_token_count", 0) or 0
-                usage["output_tokens"] = getattr(resp.usage_metadata, "candidates_token_count", 0) or 0
+            um = getattr(resp, "usage_metadata", None)
+            if um:
+                prompt = getattr(um, "prompt_token_count", 0) or 0
+                total = getattr(um, "total_token_count", 0) or 0
+                cands = getattr(um, "candidates_token_count", 0) or 0
+                thoughts = getattr(um, "thoughts_token_count", 0) or 0
+                usage["input_tokens"] = prompt
+                # Gemini bills thinking tokens as OUTPUT; candidates_token_count excludes them,
+                # so use (total - prompt) which captures candidates + thoughts (the billed output).
+                out = (total - prompt) if total > prompt else (cands + thoughts)
+                usage["output_tokens"] = out or cands
         elif provider == "aws-bedrock":
             if isinstance(resp, dict) and "usage" in resp:
                 usage["input_tokens"] = resp["usage"].get("inputTokens", 0) or 0

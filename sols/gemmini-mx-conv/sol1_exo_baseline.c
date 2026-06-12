@@ -1,0 +1,35 @@
+// AUTO-GENERATED baseline MX patch-embed conv kernel (C=2 H=32 k=4 OC=32).
+void solution(void) {
+  // im2col: patch (pi,pj) -> row pi*PATCHES_X+pj; column c*k*k + dy*k + dx.
+  // The innermost dx span is contiguous in BOTH A_buf and X_in (stride==kernel), so it is
+  // a memcpy of CONV_KSZ bytes -- not CONV_KSZ scalar stores (the conv bottleneck, ~1.36x).
+  for (int pi = 0; pi < CONV_H / CONV_KSZ; pi++)
+    for (int pj = 0; pj < PATCHES_X; pj++)
+      for (int c = 0; c < CONV_C; c++)
+        for (int dy = 0; dy < CONV_KSZ; dy++)
+          memcpy(&A_buf[pi * PATCHES_X + pj][c * CONV_KSZ * CONV_KSZ + dy * CONV_KSZ],
+                 &X_in[c][pi * CONV_KSZ + dy][pj * CONV_KSZ], CONV_KSZ * sizeof(elem_t));
+
+  gemmini_extended3_config_ex(WEIGHT_STATIONARY, 0, 0, ACC_SCALE_IDENTITY, 1, 1, 0, 0, false, 0, 0, 3, 0);
+  gemmini_mx_load_scales((uint64_t)&A_scales_row, sizeof(A_scales_row), 0);
+  gemmini_mx_load_scales((uint64_t)&B_scales_col, sizeof(B_scales_col), 1);
+
+  // batched ("block") mvin at BATCH=2 (cols=2*DIM=32, within the 6-bit hw cols field; RTL-legal).
+  gemmini_config_ld(MATMUL_K * sizeof(elem_t));
+  for (int i = 0; i < tiles_I; i++)
+    for (int k = 0; k < tiles_K; k += 2) { int bb = (tiles_K - k < 2) ? (tiles_K - k) : 2;
+      gemmini_extended_mvin((void*)(((elem_t*)A_buf) + i * DIM * MATMUL_K + k * DIM),
+                            a_base + (i * tiles_K + k) * DIM, bb * DIM, DIM); }
+  gemmini_config_ld(MATMUL_N * sizeof(elem_t));   // B[k][j] stride N -> slot (k*tiles_J + j)
+  for (int k = 0; k < tiles_K; k++)
+    for (int j = 0; j < tiles_J; j += 2) { int bb = (tiles_J - j < 2) ? (tiles_J - j) : 2;
+      gemmini_extended_mvin((void*)(((elem_t*)B_in) + (k * DIM) * MATMUL_N + j * DIM),
+                            b_base + (k * tiles_J + j) * DIM, bb * DIM, DIM); }
+
+  gemmini_config_st(OUT_COLS * sizeof(out_t));
+  gemmini_mxquant_config_mvout((uint64_t)scale_factors, tiles_I, tiles_J, tiles_K, 0, 0, 1);
+  gemmini_loop_ws_spad(tiles_I, tiles_J, tiles_K, 0, 0, 0, a_base, BANK_NUM * BANK_ROWS, 0,
+                       SPAD_DEST, false, false, false, false, false, NO_ACTIVATION, 0, 0, false, 0x38);
+  gemmini_mx_read_smem(&C_hw[0][0], SPAD_DEST * 16, MATMUL_M * MATMUL_N);
+  gemmini_fence();
+}
