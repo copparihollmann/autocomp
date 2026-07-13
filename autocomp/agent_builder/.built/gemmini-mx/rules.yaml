@@ -1,0 +1,44 @@
+general:
+- The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.
+- Keep the same function name and signature as the original program (helper functions can be renamed or deleted).
+- 'The programming model sequence must be followed in order: gemmini_extended3_config_ex → gemmini_mx_load_scales (both A
+  and B) → gemmini_mx_load_lut (if uselut=1) → mvin tiles to scratchpad → gemmini_mxquant_config_mvout → gemmini_loop_ws_spad
+  → gemmini_mx_read_smem → gemmini_fence(); violating this order causes the accelerator to use stale/uninitialized scale,
+  LUT, or format settings, producing silently incorrect results.'
+- DIM=16, BANK_NUM=4, BANK_ROWS=2048 (total 8192 scratchpad rows), ACC_ROWS=256, MAX_BLOCK_LEN=4 (scratchpad), MAX_BLOCK_LEN_ACC=1
+  (accumulator); any tile dimension, address, or block-length calculation using different values produces incorrect memory
+  layout, out-of-bounds access, or corrupted data.
+- elem_t is uint8_t (1 byte) and acc_t is uint64_t (8 bytes); any pointer arithmetic, sizeof, or stride calculation treating
+  these as different widths produces incorrect mvin/mvout addresses and wrong results.
+- gemmini_fence() must be issued after gemmini_mx_read_smem and before the host reads the DRAM output buffer; omitting the
+  fence causes the host to observe partially written or stale data, producing incorrect results.
+planning:
+- Limit the scope of the plan to the selected strategy.
+- Do not count out any of the strategies unless they are clearly irrelevant to the code.
+- B tiles must be placed at b_base = BANK_NUM*BANK_ROWS - tiles_K*tiles_J*DIM in the scratchpad (top of scratchpad, growing
+  downward); A tiles at a_base + (i*tiles_K + k)*DIM and B tiles at b_base + (j*tiles_K + k)*DIM; any other base or indexing
+  causes wrong tiles to be used in computation, producing silently incorrect results.
+- 'Scratchpad must hold all A and B tiles simultaneously: (tiles_I*tiles_K + tiles_J*tiles_K)*DIM ≤ 8192 rows (single-buffer);
+  accumulator must hold all C tiles: tiles_I*tiles_J*DIM ≤ 256 rows (single-buffer); violating these constraints causes out-of-bounds
+  scratchpad/accumulator access and corrupted results.'
+- M, N, K must be exact multiples of DIM=16 and tile counts must satisfy tiles_I=M/DIM, tiles_J=N/DIM, tiles_K=K/DIM; incorrect
+  tile counts cause out-of-bounds scratchpad accesses or silently wrong results.
+- Scale factors must be loaded via gemmini_mx_load_scales before the gemmini_loop_ws_spad that consumes them, and must not
+  be reused across tiles if the scale factors differ; stale or wrong-selector scales cause silently incorrect requantized
+  output.
+coding:
+- Wrap the generated code with ``` at the beginning and ``` at the end.
+- gemmini_mx_load_scales sel must be 0 for A (activation) scales and 1 for B (weight) scales; gemmini_mx_load_lut uses the
+  opposite convention, sel 0 for B LUT, 1 for A LUT, 2 for C LUT; swapping selectors loads scale/LUT into the wrong hardware
+  buffer, producing silently incorrect matmul results.
+- gemmini_mxquant_config_mvout must be called with i_bound=tiles_I, j_bound=tiles_J, k_bound=tiles_K matching the actual tile
+  dimensions used in the subsequent gemmini_loop_ws_spad; a mismatch causes the requantizer to operate on wrong tile boundaries,
+  producing silently incorrect quantized output.
+- The act_mx_fmt, wgt_mx_fmt, and out_mx_fmt fields in gemmini_extended3_config_ex must match the actual MX format of the
+  data being loaded, and uselut must be set to 1 when fp6 or fp4 LUT-based dequantization is required; a format mismatch or
+  uselut=0 causes the systolic array to misinterpret operand bit patterns or bypass the LUT, producing silently incorrect
+  results.
+- gemmini_loop_ws_spad (not gemmini_loop_ws) must be used when operands are already in the scratchpad; funct 24 (LOOP_WS_CONFIG_SPAD_AB)
+  must be re-issued before every gemmini_loop_ws_spad call because the mx_loop_spad_marker is one-shot; omitting either causes
+  the hardware to attempt DRAM loads from invalid addresses or use stale configuration, producing incorrect results or a runtime
+  fault.

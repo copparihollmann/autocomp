@@ -1,0 +1,44 @@
+general:
+- The rewritten program should be semantically equivalent to the original program, within a small numerical tolerance.
+- Keep the same function name and signature as the original program (helper functions can be renamed or deleted).
+- Do NOT hand-roll matrix multiply in SIMT; the accelerator uses hardware MX accumulation semantics (fp8/fp6/fp4 with per-32-element
+  e8m0 block scales) that round differently from SIMT FP, and mixing or replacing accelerator results with SIMT-computed results
+  produces silently incorrect (wrong rounding) outputs that fail bit-exact verification.
+- TILE_K must be a multiple of 32; violating this breaks the per-32-K-block e8m0 scale grouping and produces silently incorrect
+  MX accumulation results.
+- The threadblock spans exactly 64 threads (2 cores × 2 warps × 16 lanes, MX_NUM_WARPS=2); using NUM_WARPS=8 or any other
+  warp count oversubscribes the 256-entry physical register file, causing an RTL rename assert or globalOverSubscription runtime
+  error.
+- The `ex_accumulate` bit must be 0 for the first K-tile and 1 for every subsequent K-tile in a LOOP_WS compute sequence;
+  reversing this causes the accumulator to be overwritten mid-accumulation or accumulated into uninitialized state, producing
+  silently wrong results.
+planning:
+- Limit the scope of the plan to the selected strategy.
+- Do not count out any of the strategies unless they are clearly irrelevant to the code.
+- SMEM is 128 KiB per cluster and is simultaneously the Gemmini scratchpad; A tiles start at row 0, B tiles at BANK_NUM*BANK_ROWS
+  - tiles_K*tiles_J*DIM, and the C accumulator at row 256 (byte offset 4096); tile buffer allocations that exceed 128 KiB
+  total or cause A/B/C regions to overlap produce memory corruption or silently incorrect results.
+- 'For LOOP_WS, issue two commands per K-tile: first a load-only pass (skip_ex|skip_stc) to DMA A/B tiles into scratchpad,
+  then a compute-only pass (skip_lda|skip_ldb) to run the systolic array; issuing a single combined command or reversing the
+  order causes incorrect or missing data in the systolic array.'
+- Scale double-buffering requires odd K-tiles' e8m0 scales to be staged at SF_MEM_A/B + 0x800 and the correct buffer selected
+  via rs1[60]/rs1[61] in gemmini_mxquant_config_mvout; mismatching the buffer address and select bits causes the accelerator
+  to read wrong scales, producing silently incorrect results.
+- Tiling counts must satisfy tiles_I = M/DIM, tiles_J = N/DIM, tiles_K = K/DIM with DIM=16, and all matrix dimensions must
+  be multiples of 16; incorrect tile counts cause out-of-bounds scratchpad accesses or wrong partial-sum accumulation.
+coding:
+- Wrap the generated code with ``` at the beginning and ``` at the end.
+- 'The MMIO issue sequence is strictly: write RS1 to +0x10, write RS2 to +0x18, then write INST to +0x00 (encoded as 0x7B
+  | (funct << 25)); writing INST before RS1/RS2 causes the accelerator to latch stale operand values and produce silently
+  incorrect results, and using any other encoding issues the wrong RoCC command.'
+- A mu_fence (or gemmini_fence) must be issued after all SIMT shared-memory stores that stage operand data or e8m0 scales
+  before the manager warp writes the MMIO INST register, and gemmini_fence() must be called before SIMT reads of C results
+  from SMEM; omitting either fence causes the accelerator to read stale operand data or SIMT to read stale/partial results,
+  producing silently incorrect outputs.
+- Use only `mu_exp(float)` for exponentials and compute sigmoid as `1.0f / (1.0f + mu_exp(-x))`; using `expf` or `exp` causes
+  a compile or link error. Do not redefine `main`, `mu_exp`, or `KernelArgs`, and do not call print functions from within
+  the kernel.
+- Do NOT use gemmini_extended_mvin2 or gemmini_extended_mvin3 (port != 0) for operands consumed by gemmini_loop_ws_spad; non-zero
+  ports route to scratchpad regions invisible to loop_ws read ports, producing spike-correct but RTL-wrong silently incorrect
+  results. Also, do NOT set cols > 48 in gemmini_extended_mvin as the 6-bit RTL field truncates cols=64 to 0, causing no data
+  to be loaded.

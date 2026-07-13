@@ -1,0 +1,46 @@
+optimizations:
+- strategy: reduce data movement
+- strategy: overlap data movement and compute
+- strategy: cache reused data in local memory instead of reloading from main memory
+- strategy: loop tiling
+- strategy: loop reordering and restructuring
+- strategy: loop unrolling
+- strategy: fuse operations
+- strategy: use lower precision
+- strategy: double buffering
+- strategy: software pipelining
+- strategy: hoist redundant operations out of loops
+- strategy: eliminate redundant computation
+- strategy: simplify or remove unnecessary code
+- strategy: try new parameter values
+- strategy: rewrite the algorithm to reduce total work
+- strategy: batch scale factor loads with `gemmini_mx_load_scales` once per K-dimension sweep, not per tile
+- strategy: hoist `gemmini_extended3_config_ex` outside all loops when MX format is invariant
+- strategy: reuse loaded B (weight) tiles across multiple I-tile iterations without re-mvin
+- strategy: pack A and B tiles contiguously in scratchpad to maximize `gemmini_loop_ws_spad` fused loop coverage
+- strategy: amortize `gemmini_mxquant_config_mvout` calls by batching multiple output tiles per configuration
+- strategy: use `gemmini_loop_ws_spad` fused hardware loop instead of hand-rolled preload/compute sequences
+- strategy: tune `skips` bitmask in `gemmini_loop_ws_spad` to skip unnecessary preload or accumulate phases
+- strategy: assign B tiles to fixed high-address scratchpad region (`b_base = BANK_NUM*BANK_ROWS - ...`) to enable weight-stationary
+    reuse across I tiles
+- strategy: avoid redundant LUT reloads by hoisting `gemmini_mx_load_lut` outside loops when LUT is format-invariant
+- strategy: "DO NOT use `mvin2`/`mvin3` (port != 0) for `gemmini_loop_ws_spad` A/B inputs: the RTL routes
+    non-zero mvin ports to a physical scratchpad region the loop_ws read ports do not address, so the result
+    is spike-correct but RTL-WRONG (verified). Use single-port `gemmini_extended_mvin` for all loop_ws inputs."
+- strategy: "batch the mvin with block_mvin (load 2 DIM-tiles per `gemmini_extended_mvin`, cols = batch*DIM):
+    batch=2 (cols=32) is the validated sweet spot. NEVER batch so cols reaches 64 — the RTL num_cols field is
+    only 6 bits, so cols=64 truncates to 0 and the load is illegal (keep cols <= 48, i.e. batch <= 3)."
+- strategy: "raise `lut_update_granularity` (fp6 path) so the output LUT is refreshed once per output (i,j)
+    tile (every tiles_K K-steps) instead of every K-step — the LUT is invariant across the K reduction."
+- strategy: "for attention P-encode, target the per-32-group e8m0 scale so the group-max lands at ~2^4
+    (MX_P_TARGET_LOG2=4), NOT the fp8 max (448): a too-large P overflows the e4 block accumulator in the P@V
+    matmul and corrupts the output."
+- strategy: set `ex_accumulate` flag in `gemmini_loop_ws_spad` to accumulate across K tiles without intermediate mvout
+- strategy: minimize `gemmini_fence` calls by deferring synchronization to after full tile batch completes
+- strategy: choose tile layout (a_base, b_base, SPAD_DEST) to avoid scratchpad bank conflicts between A, B, and output regions
+- strategy: reorder I/J/K loop nest to maximize weight-stationary B-tile reuse across I iterations
+- strategy: size tiles to exact multiples of DIM=16 to eliminate padding overhead in mvin and compute
+- strategy: pipeline `gemmini_mx_read_smem` reads with next-tile mvin to overlap output transfer and input loading
+- strategy: consolidate scale factor arrays to minimize `gemmini_mx_load_scales` call count across tiled loop iterations
+- strategy: use `set_only_strides=true` in `gemmini_extended3_config_ex` for stride-only reconfiguration to avoid full re-config
+    overhead

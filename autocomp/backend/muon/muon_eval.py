@@ -18,6 +18,9 @@ from autocomp.search.prob import Prob
 
 LLVM_MUON = pathlib.Path("/scratch2/agustin/radiance-kernels/llvm/llvm-muon")
 RADIANCE_KERNELS = pathlib.Path("/scratch/agustin/projects/radiance-kernels/kernels")
+# Driver for the MX-Gemmini accelerator (MMIO command stream). Staged into the build dir
+# for combined Muon+MX problems; see MX_PROBLEM marker below.
+MXGEMM_LIB = RADIANCE_KERNELS / "gemm_mxgemmini" / "mxgemm_lib.hpp"
 CYCLOTRON_BIN = pathlib.Path(
     "/scratch/agustin/projects/chipyard/generators/radiance/cyclotron/target/release/cyclotron")
 CYCLOTRON_CONFIG = pathlib.Path(
@@ -151,6 +154,24 @@ class MuonEvalBackend(EvalBackend):
         shutil.copy(harness_dir / "data", work / "data")
         shutil.copy(harness_dir / "Makefile", work / "Makefile")
 
+        # Combined Muon + MX-Gemmini problem: stage the accelerator driver, and run
+        # cyclotron with its MX co-model enabled. Without the env flag, stores to the
+        # Gemmini MMIO block are dead writes and every candidate silently produces zeros.
+        is_mx = (harness_dir / "MX_PROBLEM").exists()
+        if is_mx:
+            shutil.copy(MXGEMM_LIB, work / "mxgemm_lib.hpp")
+            host_cpp = harness_dir / "host.cpp"
+            if host_cpp.exists():
+                shutil.copy(host_cpp, work / "host.cpp")
+        # The Makefile has no dependency on `data`/`mxgemm_lib.hpp`, so a stale object
+        # would silently survive a golden or driver change.
+        for stale in ("kernel.mu.o", "kernel.radiance.elf"):
+            (work / stale).unlink(missing_ok=True)
+
+        sim_env = {"RUST_LOG": "error"}
+        if is_mx:
+            sim_env["CYCLOTRON_MXGEMMINI"] = "1"
+
         try:
             res = subprocess.run(
                 ["make", "kernel.radiance.elf"], cwd=work, capture_output=True,
@@ -189,7 +210,7 @@ class MuonEvalBackend(EvalBackend):
             try:
                 func = subprocess.run(
                     base_cmd, cwd=work, capture_output=True, text=True,
-                    timeout=FUNC_TIMEOUT, env={"RUST_LOG": "error"},
+                    timeout=FUNC_TIMEOUT, env=sim_env,
                 )
             except subprocess.TimeoutExpired:
                 logger.info("muon eval: functional timeout (code %d)", code_i)
@@ -220,7 +241,7 @@ class MuonEvalBackend(EvalBackend):
         try:
             sim = subprocess.run(
                 base_cmd + ["--timing"], cwd=work, capture_output=True, text=True,
-                timeout=SIM_TIMEOUT, env={"RUST_LOG": "error"},
+                timeout=SIM_TIMEOUT, env=sim_env,
             )
         except subprocess.TimeoutExpired:
             logger.info("muon eval: timed-sim timeout (code %d) — correct but too slow", code_i)

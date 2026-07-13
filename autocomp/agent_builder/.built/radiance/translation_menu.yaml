@@ -1,0 +1,8 @@
+strategies:
+- strategy: Convert high-level code to hardware-specific kernel code
+- strategy: Translate the remaining high-level code to hardware-specific kernel code
+- strategy: Replace matmul/GEMM calls with `mxgemm`/`gemmini_loop_ws_spad` accelerator primitives driven via MMIO stores to
+    `GEMMINI_CTRL`.
+- strategy: Map elementwise and activation ops (sigmoid, exp) to SIMT lanes using `mu_exp` instead of stdlib `expf`/`exp`.
+- strategy: Stage input tiles and e8m0 scale factors into shared memory using `store_shared`/`store64_shared` before issuing
+    accelerator commands.

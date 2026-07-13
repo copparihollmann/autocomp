@@ -1,0 +1,2 @@
+// marker: this problem drives the MX-Gemmini accelerator; the evaluator must stage
+// mxgemm_lib.hpp into the build dir and run cyclotron with CYCLOTRON_MXGEMMINI=1.

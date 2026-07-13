@@ -105,6 +105,29 @@ def _count_host_float_ops(code_str: str) -> int:
     return len(_HOST_FLOAT_RE.findall(s))
 
 
+def _eval_diag(test_output: str, max_chars: int = 2500) -> str:
+    """Extract the salient failure diagnostic from a spike/compile output so it can be fed back to
+    the LLM (instead of a silent score=inf). Prioritizes the faithful-spike guard messages
+    ("GEMMINI ... ILLEGAL: cols=64 -> truncated, reduce batch so cols<=48" / "LOOP_WS ILLEGAL ...
+    use single-port mvin") and compiler errors, then a tail of the output. These messages tell the
+    model exactly what was illegal and how to fix it -> turns a dead-end into a climbable gradient."""
+    if not test_output:
+        return ""
+    lines = test_output.splitlines()
+    salient = [ln for ln in lines
+               if ("GEMMINI" in ln and "ILLEGAL" in ln)
+               or "error:" in ln or "Error" in ln or "undefined" in ln
+               or "Assertion" in ln or "fatal" in ln.lower()]
+    tail = lines[-15:]
+    # de-dup while preserving order; salient first, then tail
+    seen, out = set(), []
+    for ln in salient + tail:
+        ln = ln.strip()
+        if ln and ln not in seen:
+            seen.add(ln); out.append(ln)
+    return "\n".join(out)[:max_chars]
+
+
 def run_spike_mp(code_contents_lst: list[str], gemmini_path: pathlib.Path, timeout: float=120):
     """Evaluate candidate kernels on spike SEQUENTIALLY.
 
@@ -143,8 +166,9 @@ def run_spike(code_contents: str, return_dict: dict, gemmini_path: pathlib.Path,
     # build software (baremetal only — spike doesn't need the linux/pk variants)
     p = subprocess.run(["sh", _BUILD_SCRIPT, "BAREMETAL_ONLY=1"], cwd=gemmini_sw_path, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     if p.returncode != 0:
-        # return_dict["retval"] = p.stdout.decode()
-        return_dict["retval"] = "Compile error"
+        # Keep the compiler error tail so the LLM can fix it (was previously discarded ->
+        # silent score=inf). evaluate_code parses the "Compile error" prefix for control flow.
+        return_dict["retval"] = "Compile error\n" + p.stdout.decode(errors="ignore")[-3000:]
         return
 
     try:
@@ -479,11 +503,18 @@ class GemminiEvalBackend(EvalBackend):
             num_incorrect = 0
             for code_i, test_output in enumerate(test_output_per_code_str):
                 # logger.debug(test_output)
-                if test_output == "Compile error" or test_output == "Timeout":
-                    logger.debug("Test %d %s for code %d", test_i, test_output, code_i)
+                if test_output.startswith("Compile error") or test_output == "Timeout":
+                    logger.debug("Test %d %s for code %d", test_i, test_output[:40], code_i)
                     stats[code_i]["test_results"][test_i] = False
                     stats[code_i]["correct"] = False
                     stats[code_i]["compiled"] = False
+                    # Feed the failure back to the LLM (reimplement_failed uses candidate.stdout)
+                    if test_output == "Timeout":
+                        stats[code_i]["stdout"] = ("Evaluation TIMED OUT at 120s on spike — the kernel "
+                            "likely has a pathological loop bound or config; simplify the control flow / "
+                            "reduce tiling and ensure the loop terminates.")
+                    else:  # "Compile error\n<build log tail>"
+                        stats[code_i]["stdout"] = _eval_diag(test_output)
                     num_compile_errors += 1
                 elif "Correct" in test_output:
                     logger.debug("Test %d Correct result", test_i)
@@ -512,6 +543,12 @@ class GemminiEvalBackend(EvalBackend):
                     stats[code_i]["correct"] = False
                     if "compiled" not in stats[code_i]:
                         stats[code_i]["compiled"] = True
+                    # Capture the spike diagnostic (incl. faithful-spike "GEMMINI ... ILLEGAL"
+                    # guard messages) so the LLM learns WHY it failed, not just score=inf.
+                    diag = _eval_diag(test_output)
+                    if diag:
+                        stats[code_i]["stdout"] = ("Kernel produced an INCORRECT/illegal result on spike. "
+                            "Diagnostic (fix this before optimizing):\n" + diag)
                     num_incorrect += 1
             logger.info("Test %d: %d compiled (%d correct, %d incorrect), %d compile errors",
                         test_i, num_correct + num_incorrect, num_correct, num_incorrect, num_compile_errors)

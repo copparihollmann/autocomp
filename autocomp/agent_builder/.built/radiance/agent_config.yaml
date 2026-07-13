@@ -1,0 +1,21 @@
+agent_name: radiance
+version: '1.0'
+built_at: '2026-07-11T01:13:57+00:00'
+build:
+  main_model: us.anthropic.claude-sonnet-4-6
+  light_model: us.anthropic.claude-sonnet-4-6
+  agent_scope: 'Optimizing whole-Radiance kernels for tapeout: 2 Muon SIMT cores (2 warps x 16 lanes each, 128 KiB shared
+    memory, mu_schedule/mu_barrier/mu_fence/mu_exp intrinsics) that DRIVE an on-cluster MX-Gemmini (DIM=16 systolic, microscaling
+    fp8 e4m3 / fp6 e3m2 / fp4 e2m1 with per-32-K-block e8m0 scales) matrix accelerator over MMIO at 0x84000 in shared space.
+    The accelerator IS reachable and driven from SIMT via shared stores to that MMIO command block (inst=0x7B|funct<<25, RS1@+0x10/RS2@+0x18/INST@+0x00;
+    status READY@+0x08/BUSY@+0x20/OCCUPANCY@+0x28) -- this is the whole point of the combined config and OVERRIDES any notion
+    that mxgemmini/tensor ops are unavailable to SIMT. The accelerator scratchpad IS the cluster shared memory. Optimize:
+    warp specialization (a Gemmini-manager warp issuing loop_ws_spad + gemmini_fence/gemmini_fence_ready while SIMT worker
+    warps stage operands and e8m0 scales into shared memory and move C results out), MMIO command issue, K-tile software pipelining,
+    scale/LUT double-buffering (odd tiles at SF_MEM+0x800, select bits rs1[60]/rs1[61]), SMEM bank contention, requant, and
+    the SIMT C move-out. Do NOT hand-roll matmul in SIMT (the accelerator is ~100x SIMT FP throughput and rounds differently).
+    Verdict is bit-exact against hardware MX accumulation semantics. Excluded: host/CPU code, RTL/Chisel, other accelerators.'
+  sources:
+  - type: directory
+    path: agent_sources/radiance
+description: Auto-generated agent config for radiance

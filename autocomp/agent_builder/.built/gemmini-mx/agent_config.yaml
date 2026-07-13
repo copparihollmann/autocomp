@@ -1,0 +1,19 @@
+agent_name: gemmini-mx
+version: '1.0'
+built_at: '2026-06-04T01:04:05+00:00'
+build:
+  main_model: us.anthropic.claude-sonnet-4-6
+  light_model: us.anthropic.claude-sonnet-4-6
+  agent_scope: 'Optimize MX-Gemmini (microscaling fp8/fp6/fp4) matmul kernels written in C using Gemmini RoCC intrinsics for
+    the gemmini-mx accelerator (DIM=16 weight-stationary systolic array). The MX programming model: configure MX formats via
+    gemmini_extended3_config_ex; load per-block scale factors (gemmini_mx_load_scales, sel 0=A/1=B) and optional quant LUTs
+    (gemmini_mx_load_lut); mvin fp8/fp6/fp4 tiles to the scratchpad (gemmini_extended_mvin); configure the requantizer/output
+    (gemmini_mxquant_config_mvout); run the fused weight-stationary loop (gemmini_loop_ws_spad); read BF16-packed results
+    from shared memory (gemmini_mx_read_smem). Kernels run on the spike functional model (-DSPIKE_SIM). Optimize tiling, loop
+    order, scratchpad/accumulator layout and reuse, mvin/mvout scheduling, and avoiding redundant scale/LUT reloads, while
+    preserving exact correctness vs the MX golden output. Out of scope: RTL/Chisel, host/driver code, non-Gemmini hardware,
+    Radiance GPU integration.'
+  sources:
+  - type: directory
+    path: agent_sources/gemmini-mx
+description: Auto-generated agent config for gemmini-mx

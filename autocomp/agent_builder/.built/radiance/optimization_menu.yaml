@@ -1,0 +1,37 @@
+optimizations:
+- strategy: reduce data movement
+- strategy: overlap data movement and compute
+- strategy: cache reused data in local memory instead of reloading from main memory
+- strategy: loop tiling
+- strategy: loop reordering and restructuring
+- strategy: loop unrolling
+- strategy: fuse operations
+- strategy: use lower precision
+- strategy: double buffering
+- strategy: software pipelining
+- strategy: hoist redundant operations out of loops
+- strategy: eliminate redundant computation
+- strategy: simplify or remove unnecessary code
+- strategy: try new parameter values
+- strategy: rewrite the algorithm to reduce total work
+- strategy: use `gemmini_fence_ready()` instead of `gemmini_fence()` to overlap SIMT scale-staging with accelerator compute
+- strategy: 'warp-specialize: dedicate warp 0 to MMIO command issue, remaining warps to scale staging and C move-out'
+- strategy: double-buffer e8m0 scales using SF_MEM_A/B + 0x800 offset with rs1[60]/rs1[61] toggle on `gemmini_mxquant_config_mvout`
+- strategy: pipeline GMEM→SMEM A/B DMA (skip_ex|skip_stc) with previous tile's systolic compute (skip_lda|skip_ldb)
+- strategy: stage e8m0 scale factors via SIMT stores with ILP unrolling to hide store-to-store latency
+- strategy: set `ex_accumulate=true` on all K-tiles after the first to accumulate C in-place without clearing SMEM
+- strategy: maximize K-tile size (multiple of 32) to amortize per-tile MMIO command overhead
+- strategy: use `loop_matmul_skips` bitmask to issue load-only and compute-only LOOP_WS commands separately
+- strategy: vectorize C move-out with 32-bit word stores in `copy_smem_to_gmem_simt` across all 128 threads
+- strategy: assign non-manager warps to contiguous, bank-conflict-free SMEM regions to avoid contention with Gemmini DMA
+- strategy: hoist `configure_mxgemmini` (CONFIG_EX + loop bounds) outside the K-loop since tile shape is fixed
+- strategy: load FP6 LUTs once per output tile (not per K-tile) since LUT is K-invariant
+- strategy: overlap previous tile's SIMT C move-out (SMEM→GMEM) with next tile's Gemmini DMA move-in
+- strategy: use `calculate_spad_addr` double-buffering (even/odd K-tile) to let DMA fill one A/B slot while compute reads
+    the other
+- strategy: minimize `gemmini_fence()` calls by batching MMIO commands and fencing only at pipeline synchronization points
+- strategy: issue `gemmini_mxquant_config_mvout` scale-buffer select before next-tile DMA to hide config latency under DMA
+- strategy: pack C move-out iterations to maximize per-warp memory-level parallelism across all 16 lanes simultaneously
+- strategy: reuse `LOOP_WS_CONFIG_BOUNDS` configuration across K-tiles by skipping re-issue when tile shape is unchanged
+- strategy: place C accumulator at `SPAD_DEST=256` (byte 4096) to avoid overlap with A/B operand scratchpad regions
+- strategy: use `mu_fence_smem()` only after scale writes complete, not after every SIMT store, to reduce fence overhead

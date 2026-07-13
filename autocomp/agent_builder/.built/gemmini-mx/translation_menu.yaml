@@ -1,0 +1,8 @@
+strategies:
+- strategy: Convert high-level code to hardware-specific kernel code
+- strategy: Translate the remaining high-level code to hardware-specific kernel code
+- strategy: Replace scale-factor arrays with `gemmini_mx_load_scales` calls (sel 0=A, sel 1=B) to populate hardware scale
+    memory.
+- strategy: Replace output reads with `gemmini_mx_read_smem` followed by `gemmini_fence()` to drain BF16-packed results from
+    `mx_smem` to DRAM.
+- strategy: Map MX format parameters (act/wgt/out precision fields) to the corresponding 2-bit encoding arguments of `gemmini_extended3_config_ex`.
