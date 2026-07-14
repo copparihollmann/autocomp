@@ -1,9 +1,36 @@
 # Whole-Radiance HW utilization — methodology + RTL numbers
 
-Measured on the **RTL** (Verilator, tapeout-330 + trace-fix) via `scripts/muon/hw_utilization.py`.
-Cycles are **compute-only**: counted from the **first kernel instruction's emission** to the last,
-using ELF-symbol PC ranges (`kernel_body` + `mxgemm*`) ∩ the trace-db `inst` table. Harness `main`
-(setup + DRAIN spin + tohost) and `verify_body` are excluded.
+Measured on the **RTL** (Verilator, tapeout-330 + trace-fix). The trustworthy tool is
+**`scripts/muon/hw_util_phased.py`** (phase-aware, multi-scope, both engines + whole-Radiance;
+supersedes the whole-span `hw_utilization.py`). Cycles come from the trace-db `inst` table over
+ELF-symbol PC ranges; harness `main` (setup + DRAIN spin + tohost) and `verify_body` are excluded.
+
+## Utilization is reported at MULTIPLE SCOPES × BOTH ENGINES + whole-Radiance
+A single "utilization %" is meaningless without saying *of what window* and *for which engine*. The
+tool fills only the cells that are physically real for the kernel (`—` otherwise):
+
+**Scopes** (which window the useful work is divided by):
+- **inner / steady** — warm per-K-tile, cold + edge tiles excluded (MX, needs GK≥4). The *reachable
+  ceiling*: what the engine does when fed and warm.
+- **compute-window** — the phase where the engine actually computes (MX = `main_matmul_k_loop` P2;
+  SIMT = `kernel_body`). Excludes config/DMA/move-out. "How good is the compute itself."
+- **whole-kernel** — first→last kernel instr, *including* config + operand-DMA + move-out.
+  End-to-end; overhead-diluted; this is what a caller actually pays per launch.
+- **fused-layer** — one kernel that drives *both* engines (test33): whole-kernel window, reported
+  per engine. For a single op, layer == kernel.
+- **whole-layer** (`--layer manifest.json`) — several ops that make up a transformer sub-layer, run
+  serially on the one cluster: layer cycles = Σ kernel cycles; per-engine util over the cycles where
+  that engine is the compute engine; + idle% (per-launch overhead) and combined throughput eff.
+
+**Engines** (never conflated — the trace records only Muon instructions):
+- **MX-Gemmini** systolic: `U = essential_MACs / (PEAK_MX[fmt] × window_cyc)` (analytical; MX work is
+  NOT traced). Muon IPC on an MX kernel is *orchestration only*, not throughput.
+- **Muon-SIMT**: `U = essential_MACs/(32·win)` or `FLOPs/(64·win)`, + IPC / issue-slot util.
+- **Whole-Radiance** (both engines, whole-kernel window): per-engine **active fraction**, **any-engine
+  busy %** (→ idle % = pure launch/config/barrier), **engine overlap** (`Σactive / union`; **1.0× =
+  serialized**, >1.05× = genuine concurrency), and a **throughput efficiency** vs the summed peak of
+  both engines. That last one is a *mixed-precision op-throughput* ratio (MX fp8 ops + SIMT fp32 ops);
+  a low value = idle silicon (the other engine sitting unused), **not** numeric error.
 
 ## The rule that makes this correct for *whole* Radiance
 The two compute engines are **not** interchangeable and must not be conflated:
