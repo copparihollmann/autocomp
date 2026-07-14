@@ -44,14 +44,27 @@ RTL linear fit: **≈ 50041 + 1791·tiles** (core). The 1.76× at K=512 matches 
 already documented for the +35 simv — **so the calibration transfers to real tapeout silicon; no
 change is warranted.**
 
-**KCMP/KDMA are UNIDENTIFIABLE from these kernels.** Sweeping KCMP∈{455,1036} × KDMA∈{71,143} leaves
-cyclotron's prob22/prob24 cycles *bit-identical* (31478 / 50831) — the accelerator (compute AND DMA)
-is fully hidden behind SIMT work (scale-staging + C move-out), so these 64×64 baselines are SIMT-bound
-in the co-model (`calib_mx.sh`'s identifiability warning, realized). cyclotron's SIMT-floor per-tile
-slope (~2419) already exceeds RTL's (1791), so no coefficient value matches the slope anyway.
-**To identify KCMP/KDMA you need an accelerator-bound anchor** (128×128 output tile, large K per
-loop_ws, minimal SIMT/output — a Phase-5 kernel). Until then: rank on RTL-gated numbers; cyclotron is
-directional (it under-models fixed SIMT overhead → under-predicts totals 3.3× at K=64, 1.3× at K=1024).
+**KCMP is unidentifiable from the 64×64 baselines, but VALIDATED on a 128×128 anchor.** On the 64×64
+kernels, sweeping KCMP∈{455,1036} × KDMA∈{71,143} leaves cyclotron's prob22/prob24 cycles *bit-identical*
+(31478 / 50831) — the accelerator is fully hidden behind SIMT work (scale-staging + C move-out), so
+those kernels are SIMT-bound (`calib_mx.sh`'s identifiability warning, realized). **A 128×128 output tile
+fixes this** (`gemm_mxgemmini/mxgemm.fp8.m128n128k512.tm128tn128tk128.fullout`): cyclotron there swings
+56651 (KCMP=455) → 96658 (KCMP=1804), Δ40007 — the accelerator is on the critical path. Fitting against
+the real tapeout-330 RTL anchor:
+
+| 128×128 K=512 | value |
+|---|---|
+| RTL kernel cycles (Verilator, symbol-based) | **95829** core |
+| cyclotron @ default KCMP=1804 | 96658 core → **+0.87%** |
+| exact-fit KCMP | 1776 (1.6% below default) |
+| RTL utilization | **34.2%** (vs 1.97% at 64×64) |
+
+**So KCMP=1804 is correct to within ~1% on the accelerator-bound regime where it matters — verdict
+stands: no change.** The 64×64 3.3× under-prediction is purely cyclotron's fixed-SIMT-overhead
+under-model (KCMP-independent), NOT a wrong coefficient. Rank on RTL-gated numbers for SIMT-bound
+kernels; cyclotron is accurate (~1%) once the accelerator dominates. (KDMA still unprobed at 128×128 —
+compute dominates there; a dedicated DMA-bound anchor would be needed to pin it, but its effect is
+second-order.)
 
 ## Decisions worth remembering (each one bit us)
 

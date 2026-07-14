@@ -62,12 +62,13 @@ control reports errors before trusting a PASS.
 | 512  | 8  | 64136 | 36393 | 1.76× |
 | 1024 | 16 | 78803 | 61943 | 1.27× |
 
-cyclotron under-models the fixed SIMT/setup overhead (low intercept ~13k vs RTL ~50k) while its
-per-tile slope runs steep — so it *under*-predicts total kernel cycles, worst at low K (3.3×),
-converging toward 1 at high K. The 1.76× at K=512 is stable across the +35 simv and real tapeout-330
-silicon. **KCMP/KDMA cannot fix this** — these 64×64 baselines are SIMT-bound in the co-model, so the
-accelerator coefficients are unidentifiable (see VERSIONS.lock). **Rank on RTL-gated numbers; treat
-cyclotron speedups as directional.**
+cyclotron under-models the fixed SIMT/setup overhead (low intercept ~13k vs RTL ~50k) — so it
+*under*-predicts total kernel cycles for **SIMT-bound** kernels, worst at low K (3.3×). This is NOT a
+wrong KCMP: on an **accelerator-bound** anchor (128×128 K=512, `mxgemm.fp8.m128n128k512...tk128`),
+where the MX unit is on the critical path, cyclotron @ default KCMP=1804 = 96658 vs **RTL 95829 —
+just +0.87%** (RTL util 34.2%). So: **cyclotron is accurate (~1%) once the accelerator dominates, and
+under-predicts only in the SIMT/overhead-bound regime.** For SIMT-bound kernels rank on RTL-gated
+numbers; for accelerator-bound kernels cyclotron cycles are trustworthy. KCMP=1804 validated — no change.
 
 ## Traps that have already cost real time
 
