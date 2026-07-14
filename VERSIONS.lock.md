@@ -44,27 +44,30 @@ RTL linear fit: **≈ 50041 + 1791·tiles** (core). The 1.76× at K=512 matches 
 already documented for the +35 simv — **so the calibration transfers to real tapeout silicon; no
 change is warranted.**
 
-**KCMP is unidentifiable from the 64×64 baselines, but VALIDATED on a 128×128 anchor.** On the 64×64
-kernels, sweeping KCMP∈{455,1036} × KDMA∈{71,143} leaves cyclotron's prob22/prob24 cycles *bit-identical*
-(31478 / 50831) — the accelerator is fully hidden behind SIMT work (scale-staging + C move-out), so
-those kernels are SIMT-bound (`calib_mx.sh`'s identifiability warning, realized). **A 128×128 output tile
-fixes this** (`gemm_mxgemmini/mxgemm.fp8.m128n128k512.tm128tn128tk128.fullout`): cyclotron there swings
-56651 (KCMP=455) → 96658 (KCMP=1804), Δ40007 — the accelerator is on the critical path. Fitting against
-the real tapeout-330 RTL anchor:
+**KCMP is unidentifiable from the 64×64 baselines** (SIMT-bound: sweeping KCMP∈{455,1036}×KDMA∈{71,143}
+leaves cyclotron's prob22/prob24 cycles *bit-identical* 31478/50831 — the accelerator is hidden behind
+SIMT scale-staging + C move-out). A 128×128 tile DOES put the accelerator on the critical path
+(cyclotron swings with KCMP), but a **3-anchor sweep shows cyclotron still does NOT track RTL's cycle
+scaling** — so KCMP cannot be cleanly fit even there:
 
-| 128×128 K=512 | value |
-|---|---|
-| RTL kernel cycles (Verilator, symbol-based) | **95829** core |
-| cyclotron @ default KCMP=1804 | 96658 core → **+0.87%** |
-| exact-fit KCMP | 1776 (1.6% below default) |
-| RTL utilization | **34.2%** (vs 1.97% at 64×64) |
+| 128×128 fp8 | tiles | RTL | cyclotron@1804 | ratio | best-fit KCMP |
+|---|---|---|---|---|---|
+| K=128 | 1 | 40152 | 33682 | 1.19× | 3176 |
+| K=256 | 2 | 79240 | 58227 | 1.36× | 3479 |
+| K=512 | 4 | 95829 | 96658 | 0.99× | 1776 |
 
-**So KCMP=1804 is correct to within ~1% on the accelerator-bound regime where it matters — verdict
-stands: no change.** The 64×64 3.3× under-prediction is purely cyclotron's fixed-SIMT-overhead
-under-model (KCMP-independent), NOT a wrong coefficient. Rank on RTL-gated numbers for SIMT-bound
-kernels; cyclotron is accurate (~1%) once the accelerator dominates. (KDMA still unprobed at 128×128 —
-compute dominates there; a dedicated DMA-bound anchor would be needed to pin it, but its effect is
-second-order.)
+**No single KCMP fits**: K=128/256 want ~3300, K=512 wants 1776. Root cause — **RTL cycles sub-linearize
+with tile count** (K=256→512 adds only 8295/tile vs K=128→256's 39088/tile: the systolic array amortizes
+its pipeline fill as K grows), while cyclotron scales more linearly (its `gemmini_fence()` serializes
+per-tile). This is a **pipeline-overlap modeling gap KCMP structurally cannot close.**
+
+⚠️ **Correction (supersedes commit 1eac12e):** an earlier single-anchor result claimed "KCMP=1804
+validated to +0.87% at 128×128 K=512." That 0.99× was the *crossover* of two mismatched curves
+(cyclotron under-models the fixed intercept, over-scales per-tile), NOT a validation — the ratio swings
+1.19–1.36 at other K. **Verdict: keep KCMP=1804** (no cleanly-better value exists; the model can't match
+RTL's shape regardless), and **treat cyclotron as directional even in the accelerator-bound regime —
+rank on RTL-gated numbers.** RTL utilization at 128×128 rises to 20–34% (vs 1.97% at 64×64), so the
+larger tiles are the right workload direction; the co-model just can't rank them precisely.
 
 ## Decisions worth remembering (each one bit us)
 

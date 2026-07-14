@@ -62,13 +62,15 @@ control reports errors before trusting a PASS.
 | 512  | 8  | 64136 | 36393 | 1.76× |
 | 1024 | 16 | 78803 | 61943 | 1.27× |
 
-cyclotron under-models the fixed SIMT/setup overhead (low intercept ~13k vs RTL ~50k) — so it
-*under*-predicts total kernel cycles for **SIMT-bound** kernels, worst at low K (3.3×). This is NOT a
-wrong KCMP: on an **accelerator-bound** anchor (128×128 K=512, `mxgemm.fp8.m128n128k512...tk128`),
-where the MX unit is on the critical path, cyclotron @ default KCMP=1804 = 96658 vs **RTL 95829 —
-just +0.87%** (RTL util 34.2%). So: **cyclotron is accurate (~1%) once the accelerator dominates, and
-under-predicts only in the SIMT/overhead-bound regime.** For SIMT-bound kernels rank on RTL-gated
-numbers; for accelerator-bound kernels cyclotron cycles are trustworthy. KCMP=1804 validated — no change.
+cyclotron under-models the fixed SIMT/setup overhead (low intercept vs RTL) so it *under*-predicts
+SIMT-bound kernels (3.3× at 64×64 K=64). On **accelerator-bound** 128×128 kernels the accelerator is on
+the critical path, but a 3-anchor sweep shows cyclotron still doesn't track RTL's cycle *scaling*:
+ratios K=128/256/512 = 1.19× / 1.36× / 0.99×. RTL sub-linearizes with tile count (pipeline amortization)
+while cyclotron scales ~linearly, so **no single KCMP fits** (K=128/256 want ~3300, K=512 wants 1776) —
+a modeling gap KCMP can't close. (An earlier note claimed "+0.87% at K=512 validates KCMP=1804"; that
+0.99× was a two-curve *crossover*, not a validation — see VERSIONS.lock.) **Bottom line: rank on
+RTL-gated numbers; treat cyclotron as directional even when the accelerator dominates.** KCMP=1804
+kept (no cleanly-better value).
 
 ## Traps that have already cost real time
 
