@@ -87,16 +87,18 @@ def kernel_region(funcs):
             if nm not in EXCLUDE and not any(nm.startswith(p) for p in EXCLUDE_PREFIX)]
 
 
-def cyc_span(cur, ranges):
+def cyc_span(cur, ranges, floor=0):
     if not ranges:
         return None
     w = " or ".join(f"(pc>={lo} and pc<{hi})" for lo, hi in ranges)
-    r = cur.execute(f"select min(cycle),max(cycle),count(*) from inst where {w}").fetchone()
+    r = cur.execute(f"select min(cycle),max(cycle),count(*) from inst where ({w}) and cycle>=?",
+                    (floor,)).fetchone()
     return r if r[0] is not None else None
 
 
-def instrs_in(cur, lo, hi):
-    return cur.execute("select count(*) from inst where pc>=? and pc<?", (lo, hi)).fetchone()[0]
+def instrs_in(cur, lo, hi, floor=0):
+    return cur.execute("select count(*) from inst where pc>=? and pc<? and cycle>=?",
+                       (lo, hi, floor)).fetchone()[0]
 
 
 def label_addr(labels, stem, kind):
@@ -126,22 +128,38 @@ def pct(num, den):
 
 
 # ---------------------------------------------------------------- core measurement
-def measure(elf, trace, engine, macs=0, flops=0, byts=0, fmt="fp8", tile_macs=0, label=""):
-    """Return a structured dict of every scope x engine number, measured from the RTL trace."""
+def measure(elf, trace, engine, macs=0, flops=0, byts=0, fmt="fp8", tile_macs=0, label="",
+            warm_passes=1):
+    """Return a structured dict of every scope x engine number, measured from the RTL trace.
+
+    warm_passes=2: the harness ran kernel_body twice back-to-back (warm-pass double-schedule); both
+    passes execute identical kernel_body so the kernel-region instr count is exactly 2x. We split at
+    the count//2 ordinal and measure ONLY the 2nd (warm) pass via a cycle floor; the 1st pass cold
+    cycles are reported as the first-touch penalty. warm_passes=1: single pass, floor=0 (unchanged)."""
     funcs, labels = parse_symbols(elf)
     phases = phase_intervals(labels)
     kern = kernel_region(funcs)
     cur = sqlite3.connect(f"file:{trace}?mode=ro", uri=True).cursor()
 
-    kspan = cyc_span(cur, kern)
-    if not kspan:
+    floor, cold_cyc_penalty = 0, None
+    full = cyc_span(cur, kern, 0)
+    if not full:
         raise SystemExit(f"no kernel instructions in trace ({elf} / {trace} mismatch?)")
+    if warm_passes == 2 and full[2] >= 2:
+        kw = " or ".join(f"(pc>={lo} and pc<{hi})" for lo, hi in kern)
+        mid = cur.execute(f"select cycle from inst where ({kw}) order by cycle limit 1 offset ?",
+                          (full[2] // 2,)).fetchone()[0]
+        floor = mid
+        cold_cyc_penalty = mid - full[0]     # pass-1 (cold) span up to the 2nd-pass start
+
+    kspan = cyc_span(cur, kern, floor)
     kfirst, klast, kinstr = kspan
     kcyc = klast - kfirst
     peak_mx = PEAK_MX[fmt]
     d = {"label": label or elf.split("/")[-1], "engine": engine, "fmt": fmt,
          "kfirst": kfirst, "klast": klast, "kinstr": kinstr, "kcyc": kcyc,
          "macs": macs, "flops": flops, "bytes": byts, "peak_mx": peak_mx,
+         "warm_passes": warm_passes, "cold_penalty": cold_cyc_penalty,
          "phase_rows": [], "checks": [], "gk": None,
          "win": {}, "mx": {}, "simt": {}, "rad": {}}
 
@@ -152,15 +170,16 @@ def measure(elf, trace, engine, macs=0, flops=0, byts=0, fmt="fp8", tile_macs=0,
             return [(l, h) for (l, h) in inner
                     if not any(l2 <= l and h <= h2 and (l2, h2) != (l, h) for (l2, h2) in inner)]
         for lo, hi, stem in phases:
-            sp = cyc_span(cur, [(lo, hi)])
+            sp = cyc_span(cur, [(lo, hi)], floor)
             if not sp:
                 continue
             child = direct_children(lo, hi)
-            own = instrs_in(cur, lo, hi) - sum(instrs_in(cur, l, h) for l, h in child)
+            own = instrs_in(cur, lo, hi, floor) - sum(instrs_in(cur, l, h, floor) for l, h in child)
             d["phase_rows"].append((stem, lo, hi, own, sp[1] - sp[0], sp[0], sp[1]))
         mt = label_addr(labels, "matmul_tile_async", "start")
         if mt is not None:
-            d["gk"] = cur.execute("select count(*) from inst where pc=?", (mt,)).fetchone()[0]
+            d["gk"] = cur.execute("select count(*) from inst where pc=? and cycle>=?",
+                                  (mt, floor)).fetchone()[0]
 
     # ---- MX windows ----
     mx_active = 0
@@ -168,7 +187,7 @@ def measure(elf, trace, engine, macs=0, flops=0, byts=0, fmt="fp8", tile_macs=0,
         klo = label_addr(labels, "main_matmul_k_loop", "start")
         khi = label_addr(labels, "main_matmul_k_loop", "end")
         if klo is not None and khi is not None:
-            p2 = cyc_span(cur, [(klo, khi)])
+            p2 = cyc_span(cur, [(klo, khi)], floor)
             p2cyc = p2[1] - p2[0]
             mx_active = p2cyc
             d["win"]["mx_compute"] = (p2cyc, p2[0], p2[1])
@@ -180,7 +199,8 @@ def measure(elf, trace, engine, macs=0, flops=0, byts=0, fmt="fp8", tile_macs=0,
             # warm per-tile
             mt = label_addr(labels, "matmul_tile_async", "start")
             if mt is not None:
-                ts = [r[0] for r in cur.execute("select cycle from inst where pc=? order by cycle", (mt,))]
+                ts = [r[0] for r in cur.execute(
+                    "select cycle from inst where pc=? and cycle>=? order by cycle", (mt, floor))]
                 if len(ts) >= 4:
                     deltas = [ts[i + 1] - ts[i] for i in range(len(ts) - 1)]
                     steady = deltas[1:-1]
@@ -209,9 +229,9 @@ def measure(elf, trace, engine, macs=0, flops=0, byts=0, fmt="fp8", tile_macs=0,
                # the cut must be the MX-region END cycle, not the last tile issue -- else the RoPE
                # window overlaps the matmul drain and reports spurious concurrency + IPC>peak).
             mxreg = cyc_span(cur, [(label_addr(labels, "mxgemm_single_output_tile", "start"),
-                                    label_addr(labels, "mxgemm_single_output_tile", "end"))])
+                                    label_addr(labels, "mxgemm_single_output_tile", "end"))], floor)
             cut = mxreg[1] if mxreg and mxreg[1] is not None else kfirst
-            # RoPE instrs = KERNEL-region PCs only (never harness/verify/drain) with cycle>cut
+            # RoPE instrs = KERNEL-region PCs only (never harness/verify/drain), warm-pass floor..cut
             kw = " or ".join(f"(pc>={lo} and pc<{hi})" for lo, hi in kern)
             rope = cur.execute(
                 f"select min(cycle),max(cycle),count(*) from inst where cycle>? and ({kw})", (cut,)).fetchone()
@@ -228,7 +248,7 @@ def measure(elf, trace, engine, macs=0, flops=0, byts=0, fmt="fp8", tile_macs=0,
     mo_lo = label_addr(labels, "copy_smem_to_gmem_simt", "start")
     mo_hi = label_addr(labels, "copy_smem_to_gmem_simt", "end")
     if mo_lo is not None and mo_hi is not None:
-        mo = cyc_span(cur, [(mo_lo, mo_hi)])
+        mo = cyc_span(cur, [(mo_lo, mo_hi)], floor)
         if mo and mo[0] is not None:
             simt_move = mo[1] - mo[0]
             d["simt"]["move_out_cyc"] = simt_move
@@ -271,7 +291,8 @@ def _u(x):
 
 def report_single(d):
     print(f"=== PHASED util: {d['label']} (engine={d['engine']} fmt={d['fmt']}) ===")
-    print(f"kernel span: [{d['kfirst']},{d['klast']}] = {d['kcyc']} core cyc, {d['kinstr']} Muon instrs")
+    warm = f"  [WARM 2nd pass; cold pass-1 penalty {d['cold_penalty']} cyc]" if d.get("cold_penalty") is not None else ""
+    print(f"kernel span: [{d['kfirst']},{d['klast']}] = {d['kcyc']} core cyc, {d['kinstr']} Muon instrs{warm}")
     if d["phase_rows"]:
         print("phase breakdown (innermost):")
         for stem, lo, hi, own, cyc, _, _ in d["phase_rows"]:
@@ -382,6 +403,8 @@ def main():
     ap.add_argument("--bytes", type=int, default=0)
     ap.add_argument("--fmt", choices=["fp8", "fp6", "fp4"], default="fp8")
     ap.add_argument("--label", default="")
+    ap.add_argument("--warm-passes", type=int, default=1,
+                    help="2 = harness double-scheduled kernel_body; measure the warm 2nd pass")
     ap.add_argument("--layer", help="JSON manifest (list of arg-sets) for whole-layer aggregation")
     a = ap.parse_args()
 
@@ -391,7 +414,8 @@ def main():
         return
     if not (a.elf and a.trace and a.engine):
         ap.error("need <elf> <trace> --engine  (or --layer manifest.json)")
-    d = measure(a.elf, a.trace, a.engine, a.macs, a.flops, a.bytes, a.fmt, a.tile_macs, a.label)
+    d = measure(a.elf, a.trace, a.engine, a.macs, a.flops, a.bytes, a.fmt, a.tile_macs, a.label,
+                a.warm_passes)
     ok = report_single(d)
     raise SystemExit(0 if ok else 1)
 
