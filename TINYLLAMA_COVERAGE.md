@@ -16,7 +16,7 @@ seq ≤ 1024, 4 heads.
 | 5 | **Softmax** (standalone) | `sol5_baseline` / test5 | SIMT | ✅ PASS | 64×67 (non-pow2) |
 | 6 | **SwiGLU** (silu(gate)·up) | `sol4_baseline` / test4 | SIMT | ✅ PASS | 64×128 |
 | 7 | **Residual add** (×2) | `sol28_baseline` / test28 | SIMT | ✅ PASS | 128×512 |
-| 8 | **Decode GEMV / KV-cache** | `radiance-kernels/kernels/gemv` | SIMT | ⬜ kernel exists; no autocomp harness yet | — |
+| 8 | **Decode GEMV / KV-cache** | `sol29_baseline` / test29 | SIMT | ✅ PASS | N=512, K=512 (hidden=512) |
 | 9 | **GELU** (if used) | `sol9_baseline` / test9 | SIMT | ✅ available | — |
 
 ## New this session (were genuine gaps)
@@ -26,7 +26,6 @@ seq ≤ 1024, 4 heads.
 - **ResAdd** (test28) — element-wise; two per block.
 
 ## Remaining to be a complete, RTL-gated TinyLlama set
-- **Decode GEMV** autocomp harness (kernel exists; wrap + golden).
 - **End-to-end shape sweep** at hidden/FFN 192 and 2048 (only 512-class shapes tested so far).
 - **RTL gate** each SIMT kernel (currently cyclotron-verified; RTL PASS needs the VCS full-drain
   simv — pending licence, see VERSIONS.lock).
