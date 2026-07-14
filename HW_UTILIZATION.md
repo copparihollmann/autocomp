@@ -48,3 +48,24 @@ The two compute engines are **not** interchangeable and must not be conflated:
   verify pass. The `last` cycle is the last Muon kernel instruction (the move-out), which is *after*
   the accelerator finishes (move-out reads C from SMEM behind a fence) — so the accelerator's
   completion is captured.
+
+## Realistic roofline (besides the ideal/compute roofline)
+The ideal roofline (% of peak compute) makes memory-bound kernels look terrible when they're near
+their *achievable* limit. The realistic roofline adds two more ceilings:
+- **Memory-BW ceiling (diagonal)**: `min(compute_peak, BW × arithmetic_intensity)`. BW = 4 B/cyc
+  (cold DRAM) or 64 B/cyc (SMEM-resident), from the RTL-fitted timing model.
+- **Overhead/latency floor**: a kernel below BOTH the compute and the memory-BW ceilings is
+  latency/overhead-bound (not saturating either resource).
+
+Measured (RTL, compute-only):
+| Kernel | AI (flop/B) | ideal (compute) | realistic (cold-DRAM) | DRAM-BW used | binding limit |
+|---|---|---|---|---|---|
+| MX fp8 128×128×512 | 102 | 34.2% | 42.7% | 42.7% of 4 B/cyc | **overhead/latency-bound** |
+| SIMT GEMV 64×128 | 0.49 | 0.54% | 17.7% | 17.7% of 4 B/cyc | **overhead/latency-bound** |
+
+**Diagnosis:** both kernels are below both ceilings → **latency/overhead-bound**, not compute- or
+BW-bound. GEMV's real ceiling is ~2 flop/cyc (memory-bound, AI=0.49 « DRAM ridge 16); its "0.54% of
+compute peak" is against an unreachable peak. The lever is hiding latency / cutting fixed overhead
+(fusion, larger tiles, more in-flight memory requests, MX/SIMT overlap) — NOT adding FLOPs or BW.
+
+Usage: `hw_utilization.py <elf> <trace> --engine mx|simt|fused --macs M*N*K --bytes <DRAM bytes> --fmt fp8|fp6|fp4`

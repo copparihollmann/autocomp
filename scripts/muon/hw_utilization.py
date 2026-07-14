@@ -34,6 +34,29 @@ PEAK_ISSUE = NUM_CORES                       # 1 warp-instruction / core / cycle
 PEAK_SIMT_MAC = NUM_CORES * NUM_LANES        # 32 MAC/cyc  (each lane 1 FMA/cyc)
 PEAK_SIMT_FLOP = PEAK_SIMT_MAC * 2           # 64 flop/cyc
 PEAK_MX = {"fp8": 256, "fp6": 512, "fp4": 512}   # MAC/cyc, per mod.rs:105-106
+# Memory-bandwidth ceilings for the REALISTIC roofline (bytes/cyc), from the RTL-fitted timing
+# model (cyclotron config/timing/{gmem,smem}.toml): DRAM node 4 B/cyc; SMEM lane 64 B/cyc.
+BW_DRAM = 4      # cold streaming from DRAM (no cache reuse)
+BW_SMEM = 64     # operands/intermediates resident in cluster SMEM
+
+
+def roofline(peak_flop, ach_flop, ai, cyc, ach_bw):
+    """Print ideal (compute) vs realistic (min(compute, BW*AI)) rooflines + the binding limit."""
+    dram_ceil = BW_DRAM * ai       # flop/cyc achievable if DRAM-BW-bound at this AI
+    smem_ceil = BW_SMEM * ai
+    real_ceil = min(peak_flop, dram_ceil)         # cold-DRAM realistic ceiling
+    real_ceil_smem = min(peak_flop, smem_ceil)    # if operands SMEM-resident
+    print(f"  --- roofline ---")
+    print(f"  arithmetic intensity  : {ai:.2f} flop/byte  (ridge: DRAM {peak_flop/BW_DRAM:.0f}, SMEM {peak_flop/BW_SMEM:.0f} flop/byte)")
+    print(f"  achieved              : {ach_flop:.1f} flop/cyc, {ach_bw:.2f} B/cyc DRAM")
+    print(f"  IDEAL roofline (compute peak {peak_flop:.0f}) : {100*ach_flop/peak_flop:.2f}% of peak")
+    print(f"  REALISTIC roofline (cold-DRAM, min(peak,{BW_DRAM}*AI)={real_ceil:.0f}) : {100*ach_flop/real_ceil:.1f}% of achievable")
+    print(f"  REALISTIC roofline (SMEM-resident, ={real_ceil_smem:.0f})            : {100*ach_flop/real_ceil_smem:.1f}%")
+    print(f"  DRAM-BW util          : {100*ach_bw/BW_DRAM:.1f}% of {BW_DRAM} B/cyc peak")
+    bind = ("COMPUTE-bound" if real_ceil >= 0.9*peak_flop and ach_flop > 0.6*real_ceil
+            else "DRAM-BW-bound" if ach_bw > 0.6*BW_DRAM
+            else "OVERHEAD/LATENCY-bound (below BOTH ceilings -> fuse/enlarge tiles/overlap)")
+    print(f"  binding limit         : {bind}")
 
 
 def symbols(elf):
@@ -64,6 +87,7 @@ def main():
     ap.add_argument("--engine", choices=["mx", "simt", "fused"], required=True)
     ap.add_argument("--macs", type=int, default=0, help="essential MACs (matmul: M*N*K)")
     ap.add_argument("--flops", type=int, default=0, help="essential FLOPs (elementwise ops)")
+    ap.add_argument("--bytes", type=int, default=0, help="bytes moved from DRAM (for the memory roofline)")
     ap.add_argument("--fmt", choices=["fp8", "fp6", "fp4"], default="fp8")
     ap.add_argument("--label", default="")
     a = ap.parse_args()
@@ -100,6 +124,9 @@ def main():
             if a.engine == "fused":
                 print(f"  MX phase cycles       : {mxcyc}  -> MX util /MX-phase : {util_mxph:.2f}%")
             print(f"  NOTE: Muon IPC above is ORCHESTRATION only for the MX path (warps issue MMIO + move-out).")
+            if a.bytes:
+                flop = 2 * a.macs
+                roofline(2 * peak, flop / cyc, flop / a.bytes, cyc, a.bytes / cyc)
         else:
             print(f"  (pass --macs M*N*K for the MX roofline)")
 
@@ -109,6 +136,9 @@ def main():
             util = 100 * (a.macs / PEAK_SIMT_MAC) / cyc
             print(f"  essential MACs        : {a.macs}   peak {PEAK_SIMT_MAC} MAC/cyc (2 cores x 16 lanes FMA)")
             print(f"  SIMT compute util     : {util:.2f}%   (essential_MACs / (peak * {cyc}))")
+            if a.bytes:
+                flop = 2 * a.macs
+                roofline(PEAK_SIMT_FLOP, flop / cyc, flop / a.bytes, cyc, a.bytes / cyc)
         elif a.flops:
             util = 100 * (a.flops / PEAK_SIMT_FLOP) / cyc
             print(f"  essential FLOPs       : {a.flops}   peak {PEAK_SIMT_FLOP} flop/cyc")
