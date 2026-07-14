@@ -132,10 +132,13 @@ def measure(elf, trace, engine, macs=0, flops=0, byts=0, fmt="fp8", tile_macs=0,
             warm_passes=1):
     """Return a structured dict of every scope x engine number, measured from the RTL trace.
 
-    warm_passes=2: the harness ran kernel_body twice back-to-back (warm-pass double-schedule); both
-    passes execute identical kernel_body so the kernel-region instr count is exactly 2x. We split at
-    the count//2 ordinal and measure ONLY the 2nd (warm) pass via a cycle floor; the 1st pass cold
-    cycles are reported as the first-touch penalty. warm_passes=1: single pass, floor=0 (unchanged)."""
+    warm_passes=2: split a double-scheduled trace at the count//2 ordinal and measure only the warm
+    2nd pass. CAVEAT (measured): the Muon scheduler launches the 8 warp-slots staggered and interleaves
+    the two dispatches, so on real SIMT kernels the two passes do NOT form two clean temporal clusters
+    -- the count//2 split can land mid-pass. Use warm_passes=2 ONLY when a clean split is confirmed.
+    For rigorous warm numbers prefer: MX -> the per-tile steady window (always correct, phase-labelled);
+    SIMT memory-bound kernels -> the whole-kernel number IS the honest cost (cold-DRAM is the actual
+    bottleneck, not an artifact to hide). warm_passes=1 (default): single pass, floor=0."""
     funcs, labels = parse_symbols(elf)
     phases = phase_intervals(labels)
     kern = kernel_region(funcs)

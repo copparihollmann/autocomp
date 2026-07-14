@@ -1,0 +1,18 @@
+{
+  "_comment": "Per-kernel util-sweep spec. engine/macs/flops/bytes/fmt/tile_macs feed hw_util_phased.py. bytes = analytic DRAM footprint (operands+output). flops = essential elementwise FLOPs (approx; these are memory-bound so exact count is not classification-critical). MX tile_macs = TILE_M*TILE_N*TILE_K.",
+  "kernels": [
+    {"n": 4,  "tag": "u_t4_swiglu",  "engine": "simt", "flops": 163840,  "bytes": 393216,  "label": "SwiGLU 64x512"},
+    {"n": 5,  "tag": "u_t5_softmax", "engine": "simt", "flops": 21440,   "bytes": 34304,   "label": "Softmax 64x67"},
+    {"n": 26, "tag": "u_t26_rope",   "engine": "simt", "flops": 196608,  "bytes": 525312,  "label": "RoPE 512x128"},
+    {"n": 27, "tag": "u_t27_rmsnorm","engine": "simt", "flops": 98304,   "bytes": 264192,  "label": "RMSNorm 64x512"},
+    {"n": 28, "tag": "u_t28_resadd", "engine": "simt", "flops": 65536,   "bytes": 786432,  "label": "ResAdd 128x512"},
+    {"n": 29, "tag": "u_t29_gemv",   "engine": "simt", "macs": 262144,   "bytes": 1052672, "label": "GEMV 512x512"},
+    {"n": 34, "tag": "u_t34_qkt",    "engine": "simt", "macs": 8192,     "bytes": 33536,   "label": "decode QKt S128 D64"},
+    {"n": 35, "tag": "u_t35_gmvsm",  "engine": "simt", "flops": 640,     "bytes": 1024,    "label": "GEMV-softmax S128"},
+    {"n": 36, "tag": "u_t36_pv",     "engine": "simt", "macs": 8192,     "bytes": 33536,   "label": "decode PV S128 D64"},
+    {"n": 33, "tag": "u_t33_fused",  "engine": "fused","macs": 262144,   "flops": 32768,   "fmt": "fp8", "label": "FUSED QKV+RoPE 64^3"},
+    {"n": 37, "tag": "u_t37_fp4",    "engine": "mx",   "macs": 524288,   "fmt": "fp4", "tile_macs": 262144, "bytes": 24576,  "label": "MxGEMM fp4 64x64x128"},
+    {"n": 38, "tag": "u_t38_fp6",    "engine": "mx",   "macs": 2097152,  "fmt": "fp6", "tile_macs": 2097152,"bytes": 65536,  "label": "MxGEMM fp6 128^3"},
+    {"n": 39, "tag": "u_t39_requant","engine": "mx",   "macs": 524288,   "fmt": "fp8", "tile_macs": 524288, "bytes": 20480,  "label": "Requant fp8 64x64x128"}
+  ]
+}
