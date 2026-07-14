@@ -27,7 +27,31 @@ All branches are pushed to `github.com/copparihollmann/<repo>`.
 | `DIM` | 16 | 16×16 systolic mesh. |
 | `BANK_NUM × BANK_ROWS` | 4 × **2048** | Tapeout SMEM is **128 KiB** (`TapeoutSmemConfig`: `size=128<<10`, `numBanks=4`). |
 | MX co-model | `CYCLOTRON_MXGEMMINI=1` | Off by default; inert in the RTL DPI path. |
-| Calibrated `KCMP` / `KDMA` | ~960 / ~76 | ⚠️ Fitted against the OLD (+35) simv. **Must be re-fitted against the tapeout-330 simv.** |
+| `K_CMP_MILLI` / `K_DMA_MILLI` | **1804 / 143** | Compiled defaults (`mxgemmini/mod.rs:110-111`). The old docs said "~960/76" — that was never the operative value. **Recalibrated against tapeout-330 (2026-07-13): UNCHANGED.** See below. |
+
+### KCMP/KDMA recalibration verdict (tapeout-330, symbol-based kernel cycles)
+
+Measured cyclotron-vs-RTL kernel_body span (core cyc, `kernel_utilization.py`) over the K-sweep:
+
+| prob | K | tiles | RTL | cyclotron@(1804,143) | ratio |
+|---|---|---|---|---|---|
+| 20 | 64   | 1  | 52015 | 15622 | 3.33× |
+| 23 | 128  | 2  | 53567 | 17243 | 3.11× |
+| 22 | 512  | 8  | 64136 | 36393 | 1.76× |
+| 24 | 1024 | 16 | 78803 | 61943 | 1.27× |
+
+RTL linear fit: **≈ 50041 + 1791·tiles** (core). The 1.76× at K=512 matches the bias COHERENCE.md
+already documented for the +35 simv — **so the calibration transfers to real tapeout silicon; no
+change is warranted.**
+
+**KCMP/KDMA are UNIDENTIFIABLE from these kernels.** Sweeping KCMP∈{455,1036} × KDMA∈{71,143} leaves
+cyclotron's prob22/prob24 cycles *bit-identical* (31478 / 50831) — the accelerator (compute AND DMA)
+is fully hidden behind SIMT work (scale-staging + C move-out), so these 64×64 baselines are SIMT-bound
+in the co-model (`calib_mx.sh`'s identifiability warning, realized). cyclotron's SIMT-floor per-tile
+slope (~2419) already exceeds RTL's (1791), so no coefficient value matches the slope anyway.
+**To identify KCMP/KDMA you need an accelerator-bound anchor** (128×128 output tile, large K per
+loop_ws, minimal SIMT/output — a Phase-5 kernel). Until then: rank on RTL-gated numbers; cyclotron is
+directional (it under-models fixed SIMT overhead → under-predicts totals 3.3× at K=64, 1.3× at K=1024).
 
 ## Decisions worth remembering (each one bit us)
 

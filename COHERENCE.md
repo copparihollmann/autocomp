@@ -44,11 +44,30 @@ control reports errors before trusting a PASS.
   (`kernel_body` ∪ `mxgemm*`, excluding `main`/`verify_body`) intersected with the trace-db.
   Works on **both** cyclotron (`--gen-trace true`) and RTL — same schema, directly comparable.
 - Trace `cycle` is the Muon **core** clock = 2× the tile clock the vcs gate divides `$finish_ps` by.
+- **Trace cycles require the TracerBlackBox free-running counter (radiance 6462826+a4656ba).**
+  Stock tapeout-330 predates it, so its `cyclotron_trace` DPI passes no cycle → the co-model reads
+  the next arg (`trace_valid`, 0/1) as the cycle and every field shifts by one → the whole trace-db
+  is garbage (`cycle∈{0,1}`, `rtl_kernel_cycles.py`→0). This hits **Verilator AND VCS** alike (same
+  Cyclotron.cc+Rust). The tapeout-330 build here backports those 2 trace-only commits (DUT
+  unchanged). Correction to an earlier claim: "cycle is a property of the RTL" is true of the
+  *silicon* but the trace-db field only exists once that counter is elaborated in — so it is NOT
+  automatically present just because two simulators run the same RTL.
 
-**Known bias:** cyclotron under-counts kernel cycles vs RTL (~1.76× at K=512) — it under-models
-fixed overhead ~4.6× (cold-DRAM/config/move-out) while *over*-charging per-tile accelerator work
-~1.8×. The errors partially cancel in totals, which is exactly how a sim ends up overstating
-silicon. **Rank on RTL-gated numbers; treat cyclotron speedups as directional.**
+**Known bias (measured on tapeout-330, symbol-based kernel_body span, core cyc):**
+
+| K | tiles | RTL | cyclotron | ratio |
+|---|---|---|---|---|
+| 64   | 1  | 52015 | 15622 | 3.33× |
+| 128  | 2  | 53567 | 17243 | 3.11× |
+| 512  | 8  | 64136 | 36393 | 1.76× |
+| 1024 | 16 | 78803 | 61943 | 1.27× |
+
+cyclotron under-models the fixed SIMT/setup overhead (low intercept ~13k vs RTL ~50k) while its
+per-tile slope runs steep — so it *under*-predicts total kernel cycles, worst at low K (3.3×),
+converging toward 1 at high K. The 1.76× at K=512 is stable across the +35 simv and real tapeout-330
+silicon. **KCMP/KDMA cannot fix this** — these 64×64 baselines are SIMT-bound in the co-model, so the
+accelerator coefficients are unidentifiable (see VERSIONS.lock). **Rank on RTL-gated numbers; treat
+cyclotron speedups as directional.**
 
 ## Traps that have already cost real time
 
