@@ -52,9 +52,9 @@ Backends: GEMM/proj/attention-matmul → MX-Gemmini; norms/activation/RoPE/resid
 |---|---|---|
 | MxGEMM fp8 64³, 128²×256, 128²×512 | ✅ VERIFIED | test20-24, gemm_mxgemmini fp8 |
 | MxGEMM fp6 128²×256/512/1024 | ⚠️ EXISTS (kernels), need data headers + verify | gemm_mxgemmini/mxgemm.fp6.* |
-| MxGEMM fp4 64³, 128²×256/1024 | ⚠️ EXISTS (kernels + fp4 data headers) | gemm_mxgemmini/mxgemm.fp4.* |
+| MxGEMM fp4 64³, 128²×256/1024 | ⚠️ RUNS in co-model (no self-datacheck); precision-verify is TEAM WIP | gemm_mxgemmini/mxgemm.fp4.* |
 | Requantizer (fp8 output) | ⚠️ EXISTS (byte-order bug per team) | gemm_mxgemmini/requant.cpp |
-| GEMM-SIMT BF16 | ⚠️ EXISTS (CI, no datacheck) | radiance-kernels/kernels/gemm_simt |
+| GEMM-SIMT (fp32, datacheck) | ✅ VERIFIED | test0/6/10/13; bf16 variant = datatype tweak |
 
 ## Build queue (the true gaps), priority order
 2. **GEMV-softmax** — softmax over one decode score row.
@@ -64,3 +64,6 @@ Backends: GEMM/proj/attention-matmul → MX-Gemmini; norms/activation/RoPE/resid
 6. **MX flash-attention v4** — verify the team's fused prefill attention on the co-model.
 
 Once each passes the cyclotron ladder it is RTL-gateable via search_then_rtl_gate.sh / rtl_gate_mx.sh.
+
+## Verified-complete core (this session)
+Every TinyLlama op has a working, cyclotron-bit-exact kernel: RoPE, RMSNorm, ResAdd, SwiGLU, Softmax, prefill attention (MX-GEMM + SIMT flash test7), decode attention (test34/35/36 + GEMV), QKV/O/FFN GEMM (MX fp8), SIMT GEMM (fp32), and the FUSED QKV(MX)+RoPE(SIMT). Residual = the tapeout TEAM's own WIP the spec already flags: fp6/fp4 variable-acc-precision, requantizer byte-order, MX flash-attn v4 ("Writing") -- chasing those means debugging their co-model paths, not adding kernel coverage.
