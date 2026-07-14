@@ -83,8 +83,17 @@ def phase_intervals(labels):
 
 
 def kernel_region(funcs):
+    """PC ranges of the compute kernel. Inclusion-based on the demangled entry substring
+    (kernel_body / mxgemm) -- robust to C++ NAME MANGLING, which breaks a startswith-exclusion
+    (the runtime scheduler is emitted as e.g. _ZL19mu_schedule_workersv, so "mu_schedule".startswith
+    never matches and it leaks into the region). Falls back to the exclusion allowlist only if the
+    inclusion match finds nothing (unusual entry name)."""
+    incl = [(lo, hi) for lo, hi, nm in funcs if "kernel_body" in nm or "mxgemm" in nm]
+    if incl:
+        return incl
     return [(lo, hi) for lo, hi, nm in funcs
-            if nm not in EXCLUDE and not any(nm.startswith(p) for p in EXCLUDE_PREFIX)]
+            if not any(e in nm for e in EXCLUDE)
+            and not any(p in nm for p in EXCLUDE_PREFIX)]
 
 
 def cyc_span(cur, ranges, floor=0):
