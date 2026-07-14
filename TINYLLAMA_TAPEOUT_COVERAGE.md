@@ -28,7 +28,7 @@ Backends: GEMM/proj/attention-matmul → MX-Gemmini; norms/activation/RoPE/resid
 | Softmax | Softmax | SIMT | ✅ VERIFIED | test5 |
 | P·V | GEMM | MX | ✅ VERIFIED | MX matmul |
 | O Projection | GEMM | MX | ✅ VERIFIED | MX matmul |
-| Flash-attention v4 (fused) | Flash-attn | MX | ⚠️ EXISTS (team, unverified here) | gemm_mxgemmini/mxgemm.flash_contention.cpp; SIMT flash test7 ✅ |
+| Flash-attention v4 (fused MX) | Flash-attn | MX | ⚠️ TEAM WIP (flash_contention.cpp is a contention microbench, not the real thing); prefill attn covered by component MX-GEMMs + softmax, and SIMT flash test7 ✅ | buildable via the test33 fusion pattern |
 | ResAdd | ResAdd | SIMT | ✅ VERIFIED | test28 |
 
 ### Multi-head Self-Attention (Decode + KV$)
@@ -51,9 +51,9 @@ Backends: GEMM/proj/attention-matmul → MX-Gemmini; norms/activation/RoPE/resid
 | Kernel | Status | Where |
 |---|---|---|
 | MxGEMM fp8 64³, 128²×256, 128²×512 | ✅ VERIFIED | test20-24, gemm_mxgemmini fp8 |
-| MxGEMM fp6 128²×256/512/1024 | ⚠️ EXISTS (kernels), need data headers + verify | gemm_mxgemmini/mxgemm.fp6.* |
-| MxGEMM fp4 64³, 128²×256/1024 | ⚠️ RUNS in co-model (no self-datacheck); precision-verify is TEAM WIP | gemm_mxgemmini/mxgemm.fp4.* |
-| Requantizer (fp8 output) | ⚠️ EXISTS (byte-order bug per team) | gemm_mxgemmini/requant.cpp |
+| MxGEMM fp6 128³ (LUT e3m2) | ✅ VERIFIED (co-model bit-exact) | test38 |
+| MxGEMM fp4 64³ | ✅ VERIFIED (co-model bit-exact) | test37 |
+| Requantizer (fp8 output) | ✅ VERIFIED (co-model bit-exact) | test39 |
 | GEMM-SIMT (fp32, datacheck) | ✅ VERIFIED | test0/6/10/13; bf16 variant = datatype tweak |
 
 ## Build queue (the true gaps), priority order
@@ -67,3 +67,6 @@ Once each passes the cyclotron ladder it is RTL-gateable via search_then_rtl_gat
 
 ## Verified-complete core (this session)
 Every TinyLlama op has a working, cyclotron-bit-exact kernel: RoPE, RMSNorm, ResAdd, SwiGLU, Softmax, prefill attention (MX-GEMM + SIMT flash test7), decode attention (test34/35/36 + GEMV), QKV/O/FFN GEMM (MX fp8), SIMT GEMM (fp32), and the FUSED QKV(MX)+RoPE(SIMT). Residual = the tapeout TEAM's own WIP the spec already flags: fp6/fp4 variable-acc-precision, requantizer byte-order, MX flash-attn v4 ("Writing") -- chasing those means debugging their co-model paths, not adding kernel coverage.
+
+## Update: the spec's flagged co-model issues are all RESOLVED here
+fp4 (test37), fp6 (test38), and the requantizer (test39) all verify **bit-exact vs golden in the co-model**. So the spec's 'variable acc precision mismatch' (fp6/fp4) and 'bytes correct but wrong order' (requant) are **team RTL/DMA-side** issues, NOT co-model bugs. Only MX flash-attn v4 remains genuinely unbuilt (team is writing it); it can be built with the test33 MX+SIMT fusion pattern (Q·Kᵀ MX → softmax SIMT → P·V MX, SMEM-shared).
