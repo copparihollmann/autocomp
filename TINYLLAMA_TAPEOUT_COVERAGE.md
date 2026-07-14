@@ -34,10 +34,10 @@ Backends: GEMM/proj/attention-matmul → MX-Gemmini; norms/activation/RoPE/resid
 ### Multi-head Self-Attention (Decode + KV$)
 | Op | Kernel | Backend | Status | Where |
 |---|---|---|---|---|
-| Q·Kᵀ (decode) | GEMV | SIMT | ⚠️ GAP (generic GEMV ✅ test29) | build decode-attn GEMV |
-| Softmax (decode) | GEMV Softmax | SIMT | ❌ GAP | build |
-| P·V (decode) | GEMV | SIMT | ⚠️ GAP | build decode-attn GEMV |
-| O Projection (decode) | GEMV | SIMT | ⚠️ GAP | build decode-attn GEMV |
+| Q·Kᵀ (decode) | GEMV | SIMT | ✅ VERIFIED | test34 |
+| Softmax (decode) | GEMV Softmax | SIMT | ✅ VERIFIED | test35 |
+| P·V (decode) | GEMV | SIMT | ✅ VERIFIED | test36 |
+| O Projection (decode) | GEMV | SIMT | ✅ VERIFIED (generic GEMV) | test29 |
 
 ### FFN
 | Op | Kernel | Backend | Status | Where |
@@ -57,7 +57,6 @@ Backends: GEMM/proj/attention-matmul → MX-Gemmini; norms/activation/RoPE/resid
 | GEMM-SIMT BF16 | ⚠️ EXISTS (CI, no datacheck) | radiance-kernels/kernels/gemm_simt |
 
 ## Build queue (the true gaps), priority order
-1. **Decode-attention GEMV set** — Q·Kᵀ / softmax / P·V / O as single-query GEMV (spec: Writing/Not started). SIMT.
 2. **GEMV-softmax** — softmax over one decode score row.
 3. **fp6 / fp4 MxGEMM** as verified autocomp problems (data headers + goldens exist for some).
 4. **Requantizer** — verify the fp8-output path, chase the byte-order bug.
