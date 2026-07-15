@@ -39,3 +39,36 @@ see it; memory-hierarchy/latency/overlap/overhead/register -> hand + RTL arbiter
 - **MxGEMM fp4 64x64x128** → Hand: hoist config, DMA-vs-SIMT move-out, amortize/fuse; restructuring invisible to issue-count
 - **MxGEMM fp6 128^3** → Hand + RTL-gate: canonical cyclotron blind spot (overlap/double-buffer); don't spend $ on search
 - **Requant fp8 64x64x128** → Hand: hoist config, DMA-vs-SIMT move-out, amortize/fuse; restructuring invisible to issue-count
+
+## Part D — one routed optimization carried through + RTL-gated
+
+**Diagnosis under test:** the MX kernels are FIXED-OVERHEAD-bound (config + operand-DMA + SIMT
+move-out dominate; the systolic array itself is ~90% utilized *in its compute window*). Routed lever
+(hand, not autocomp): **amortize the fixed overhead over more compute** (larger tiles / more K per
+launch) and **shrink the move-out**.
+
+**RTL A/B (Verilator, tapeout-330), fp8 128×128×K, TILE_K=128, sweeping K:**
+
+| K | GK | compute-window util | whole-kernel util | move-out % of kernel |
+|--:|--:|--:|--:|--:|
+| 128 | 1 | 88.1% | 20.4% | 48.3% |
+| 256 | 2 | 88.0% | 20.7% | 32.1% |
+| 512 | 4 | 91.9% | **34.2%** | 26.7% |
+
+**Result — diagnosis CONFIRMED:** compute-window util is flat (~88–92%: the array is already
+saturated when it computes), while whole-kernel util rises **1.68× (20.4%→34.2%)** purely from
+amortizing the fixed overhead, and the SIMT move-out fraction falls 48%→27%. This is the signature of
+a FIXED-OVERHEAD bottleneck (improvement comes from *restructuring/amortization*, not from touching
+the compute) — and it is exactly what the routing predicted, RTL-measured.
+
+**Projected next step (same lever):** even at K=512 the move-out is still 27% + config/DMA. Moving the
+epilogue off the SIMT path (DMA move-out, `SIMT_GMEM_MOVE_OUT=false`) or overlapping it with the next
+tile's compute would reclaim most of that 27% → whole-kernel util toward ~47%. (Not cycle-A/B'd here:
+the DMA path is untraced and inserts a bogus SIMT copy for trace visibility, so a clean trace-db cycle
+comparison needs the drain-independent net-cycle oracle, not the phased tool.)
+
+**Negative control (routing the other way):** the LATENCY-bound SIMT kernels run at IPC 0.02–0.31
+(2–15% issue) and util <2% — ~90%+ of cycles are memory stalls. A compute-side / instruction-count
+change (what autocomp optimizes, what cyclotron can rank) cannot move a kernel that is not
+instruction-bound, so these are correctly routed to hand + RTL-gate (overlap/prefetch/double-buffer),
+NOT to an autocomp $-search. The data (low IPC, below every compute ceiling) is the evidence.
