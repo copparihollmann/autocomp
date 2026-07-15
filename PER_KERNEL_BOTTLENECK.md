@@ -183,3 +183,21 @@ feed ≈ 64 B/cyc = the *uncontended* SMEM limit (2× the contended 32 B/cyc). S
 SMEM-feed ceiling; if both cores contend for SMEM the sub-byte tensor-core path can become
 feed-bound. (The measured fp6/fp4 kernels are tiny/overhead-bound, so this ceiling isn't hit there —
 but at scale it's the realistic limiter for sub-byte matmul, worth an RTL check.)
+
+### SIMT compute — optimized kernel (fair number vs the naive baseline)
+
+The naive matmul (2.78%) undersells the SIMT cores. The proper optimized kernels in radiance-kernels
+(`gemm_simt`: SMEM+register+ILP tiling; `sgemm_wg`: SMEM+register tile) reuse operands from registers.
+Measured the SMEM + 8-way register-blocked variant (sol0_smem_reg8) on RTL, 64³:
+
+| SIMT GEMM 64³ | cyc | IPC | SIMT compute util | RTL |
+|---|--:|--:|--:|---|
+| naive (1 out/thread) | 297,726 | 0.74 (37% issue) | 2.78% | verify-fail |
+| **SMEM + 8-way register-blocked** | **30,940** | 0.25 | **26.48%** | **PASSED, clean** |
+
+Register blocking → **9.6× faster, ~10× higher compute util (2.78%→26.48%)**, and it *clears the l0d
+assertion* (fewer global loads = less l0d response pressure) where the SMEM-only variant tripped it.
+So the fair SIMT-core matmul compute utilization is **~26% of FP peak**, not 2.78%. Still well below the
+tensor core's 92% — the scalar-lane instruction overhead is real, but a well-written SIMT GEMM uses the
+lanes ~10× better than naive. (Note: sgemm_tcore/sgemm_wg use bit-manip FP helpers so the fmadd.s
+FMA-fraction wasn't cleanly extractable for this variant; compute-util from verified MACs/cyc is exact.)
