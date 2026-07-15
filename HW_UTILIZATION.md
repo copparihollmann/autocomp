@@ -96,3 +96,24 @@ compute peak" is against an unreachable peak. The lever is hiding latency / cutt
 (fusion, larger tiles, more in-flight memory requests, MX/SIMT overlap) — NOT adding FLOPs or BW.
 
 Usage: `hw_utilization.py <elf> <trace> --engine mx|simt|fused --macs M*N*K --bytes <DRAM bytes> --fmt fp8|fp6|fp4`
+Phased/multi-scope tool: `hw_util_phased.py` (scope×engine matrix + whole-Radiance + `--layer`).
+Full 13-kernel bottleneck+routing table + Part D: **`PER_KERNEL_BOTTLENECK.md`**.
+
+## Parts C+D summary (RTL, all 13 TinyLlama kernels)
+- **MX systolic**: ~88–92% in its compute window, 96% warm steady-tile — near-saturated *when
+  computing*. Whole-kernel util rises with K (20.4%→34.2% for K=128→512): FIXED-OVERHEAD-bound, the
+  array is fine; config+operand-DMA+move-out dilute it. Move-out alone = 27–48% of the kernel.
+- **SIMT elementwise / decode-GEMV** (RoPE, RMSNorm, softmax, QKt/PV/GEMV-softmax): LATENCY-bound,
+  IPC 0.02–0.31 (2–15% issue), util <2% — memory-stall-bound, not compute/instruction-bound.
+- **Engine overlap = 1.00× everywhere** (even the "fused" kernel serializes MX→SIMT): the biggest
+  untapped lever is genuine MX/SIMT pipelining.
+- **RTL structural finding (report to team):** the per-tile **l0d has no landing pads**
+  (`makeLandingPads=false`, MuonTile.scala:242; cluster cache has them, RadianceCluster.scala:142) →
+  under sustained streaming the l0d drops backpressured responses and trips `TLNBDCache "response
+  must be ready"`. GEMV 512², SwiGLU, ResAdd hit it → can't complete at full shape. Real hazard
+  (confirmed by reading the no-landing-pad path), not a checker artifact.
+- **Correctness aside (not a util issue):** qkt/pv/gmvsm/fp4/requant fail RTL verify; qkt is
+  **drain-invariant** (DRAIN 2k→400k unchanged) = a real cyclotron-vs-RTL mismatch, not write-drain;
+  fp4/requant match the team's flagged fp6/fp4/requant precision WIP. Cycles/util still valid.
+- **Routing:** compute/instruction-count → autocomp (only ResAdd-class DRAM-BW borderline);
+  everything memory-hierarchy/latency/overlap/overhead → hand + RTL-gate (cyclotron is blind to them).
