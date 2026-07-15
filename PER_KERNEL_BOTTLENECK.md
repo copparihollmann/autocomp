@@ -72,3 +72,30 @@ comparison needs the drain-independent net-cycle oracle, not the phased tool.)
 change (what autocomp optimizes, what cyclotron can rank) cannot move a kernel that is not
 instruction-bound, so these are correctly routed to hand + RTL-gate (overlap/prefetch/double-buffer),
 NOT to an autocomp $-search. The data (low IPC, below every compute ceiling) is the evidence.
+
+## SIMT-core compute utilization (the MX analog for the Muon lanes)
+
+MX's 92–96% is the *systolic array's* MAC utilization. For the SIMT cores the compute metric is
+`essential_MACs / (32 MAC/cyc × cyc)` (2 cores × 16 lanes × 1 `fmadd.s`/lane/cyc; the 8 warps are
+latency-hiding occupancy, not extra FLOPs). Measured on RTL (fmadd.s trace-execution counts):
+
+| SIMT kernel (RTL) | cyc | IPC (issue%) | FMA-fraction | non-FMA per FMA | **SIMT compute util** |
+|---|--:|--:|--:|--:|--:|
+| decode GEMV (M=1, 64×128) | 47,259 | 0.102 (5%) | 10.7% | ~8.4 | 0.54% |
+| **GEMM 64³ (naive, compute-bound)** | 297,726 | **0.737 (37%)** | **7.5%** | ~12.4 | **2.75%** |
+| elementwise (RoPE/RMSNorm/softmax) | — | 0.02–0.20 | — | — | 0.14–1.6% |
+
+**The key result:** even the compute-bound matmul, which issues at **37% of peak issue** (10× the
+memory-bound kernels — the core is genuinely busy), reaches only **2.75% of SIMT FP peak**, because a
+scalar SIMT ISA spends ~92% of issued instructions on non-FMA work (`lw.global` loads, address
+arithmetic, loop control, `vx_split_n/vx_pred_n/vx_join` divergence). That is the architectural
+ceiling.
+
+**MX vs SIMT effective matmul throughput:** MX ≈ 256 × 0.92 ≈ **235 MAC/cyc**; SIMT ≈ 32 × 0.0275 ≈
+**0.9 MAC/cyc** — a **~260× gap**. Quantitatively why GEMM/attention-matmul route to MX and the SIMT
+cores own norms/activation/RoPE/residual/decode-GEMV.
+
+**RTL notes:** a SMEM-tiled SIMT GEMM at 64³ trips the l0d backpressure assertion (same unbuffered-l0d
+hazard); the naive version completes but is memory-bound (IPC 0.74 is issue-limited by the 12× non-FMA
+overhead, not compute). Its RTL verify also fails (tohost=1417) — another drain-invariant
+cyclotron-vs-RTL mismatch; cycles/util remain valid (data-independent control flow).
