@@ -201,3 +201,25 @@ So the fair SIMT-core matmul compute utilization is **~26% of FP peak**, not 2.7
 tensor core's 92% — the scalar-lane instruction overhead is real, but a well-written SIMT GEMM uses the
 lanes ~10× better than naive. (Note: sgemm_tcore/sgemm_wg use bit-manip FP helpers so the fmadd.s
 FMA-fraction wasn't cleanly extractable for this variant; compute-util from verified MACs/cyc is exact.)
+
+## Fused MX flash-attention (Richard's flash_attention_mx, Sq64×Sk256×d128) — RTL evaluation
+
+Fetched from amd3, builds clean on tapeout-330, evaluated on our RTL:
+
+| metric | value |
+|---|---|
+| RTL whole-kernel | **243,650 cyc** (cyclotron 185,373); runs **CLEAN — $finish, no l0d assert** |
+| SIMT IPC (aggregate) | 0.466 (23.3% issue) — SIMT moderately busy (softmax/requant/rescale) |
+| MX util / whole-kernel | **6.72%** of fp8 peak (256 MAC/cyc) — mesh mostly idle |
+| essential MX MACs | 4.19M (4×QK + 4×PV, 64×64×128 each) |
+| **binding limit** | **SIMT-softmax-bound + NO engine overlap** (async QK‖softmax is coded but in serial-isolation mode) |
+
+- **Correctness:** Richard-validated 2.48% Frobenius on RTL. Our cyclotron O-verify is inconclusive
+  (`fa_verify_out.py` parsed 0 stores — a trace-format mismatch vs its VCS `.out` expectation, NOT a
+  kernel failure; the kernel runs clean on our RTL too).
+- **Why MX util is 6.7%:** the MX gemms are small single tiles per key-block; between them the SIMT
+  online-softmax + e4m3 requant + rescale dominate the timeline and the mesh sits idle (overlap ~1.0×).
+  This is exactly Richard's "perf is shit" and it's the same two levers as everywhere: **overlap the MX
+  gemm with the SIMT softmax** (the async double-buffer is already coded — flip it out of serial-isolation
+  mode) and **amortize** (bigger tiles / fewer per-block launches). Prime autocomp/hand + RTL-gate target.
+- **l0d:** runs clean at **2 warps** — confirms the bounded-in-flight lever (same as A1).
