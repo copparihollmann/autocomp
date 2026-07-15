@@ -40,6 +40,15 @@ def spill_probe(elf):
     return (net, f"{sp_ops} sp ld/st over {lines} body insns (~{net} beyond frame)")
 
 
+def hit_assertion(tag):
+    """True if this kernel tripped the L0d backpressure assertion (trace is truncated -> whole-kernel
+    util is invalid; only captured IPC / bottleneck-class are trustworthy)."""
+    log = f"{RK}/autocomp_{tag}/sim.log"
+    if not os.path.exists(log):
+        return False
+    return "response must be ready" in open(log, errors="ignore").read()
+
+
 def detect_warm(elf, trace):
     """Return 2 if the trace looks double-scheduled (even kernel-instr count with a dominant gap at
     the count//2 ordinal), else 1."""
@@ -59,6 +68,16 @@ def detect_warm(elf, trace):
     return 1
 
 
+def cw_util(d):
+    """Display compute-window util: for MX, a >100% P2 K-loop (GK=1 label misses the systolic drain)
+    is unphysical -> show whole-kernel MX util instead. SIMT unchanged."""
+    mx, si = d["mx"], d["simt"]
+    v = mx.get("u_compute")
+    if v is not None:
+        return v if v <= 100.0 else (mx.get("u_kernel") or 0)
+    return si.get("u_compute") or 0
+
+
 def classify(d, k):
     """Decision tree (top-down, first match; over the compute window). Returns (limit, runners).
 
@@ -68,7 +87,13 @@ def classify(d, k):
     requires either an exact MAC count OR issue-util corroboration (>=0.5). Otherwise it falls through
     to the memory/latency signals (IPC, DRAM-BW), which are the reliable ones for SIMT."""
     mx, si, r = d["mx"], d["simt"], d["rad"]
-    U_c = (mx.get("u_compute") or si.get("u_compute") or 0) / 100.0
+    # MX compute-window (P2 K-loop label span) is only trustworthy when it captures the full systolic
+    # compute -- for GK=1 the K-loop label ends before the array drains, giving an unphysical >100%.
+    # In that case discard it and use the whole-kernel MX util (always valid).
+    mx_cw = mx.get("u_compute")
+    if mx_cw is not None and mx_cw > 100.0:
+        mx_cw = mx.get("u_kernel")
+    U_c = ((mx_cw if mx_cw is not None else si.get("u_compute")) or 0) / 100.0
     bw = (k.get("bytes", 0) / d["kcyc"] / BW_DRAM) if k.get("bytes") else 0
     issue = (si.get("issue_util") or 0) / 100.0
     overhead = 1.0 - r["busy_any_frac"] / 100.0
@@ -117,10 +142,20 @@ def main():
                         k.get("bytes", 0), k.get("fmt", "fp8"), k.get("tile_macs", 0),
                         k["label"], wp)
         spill = spill_probe(elf)
+        asserted = hit_assertion(tag)
+        d["asserted"] = asserted
         print("#" * 90)
         hup.report_single(d)
-        limit, runners = classify(d, k)
-        route = ROUTE.get(limit, ("Hand + RTL-gate", "re-instrument"))
+        if asserted:
+            # trace truncated at the l0d backpressure assertion -> whole-kernel util invalid; the
+            # captured IPC (low) + the assertion itself are the trustworthy memory-bound evidence.
+            limit = "MEMORY-BOUND (L0d backpressure assertion at full shape; unbuffered per-tile l0d)"
+            route = ("Hand + RTL-gate", "saturates l0d response path; reduce in-flight traffic / "
+                     "coalesce; whether the tapeout l0d should carry landing pads is a DUT call for the team")
+            runners = [f"captured IPC {d['simt'].get('ipc',0):.3f}", "assertion=memory-bound"]
+        else:
+            limit, runners = classify(d, k)
+            route = ROUTE.get(limit, ("Hand + RTL-gate", "re-instrument"))
         print(f">>> spill-probe: {spill[1]}")
         print(f">>> BINDING LIMIT: {limit}  | runners-up: {runners}")
         print(f">>> ROUTE: {route[0]} — {route[1]}\n")
@@ -134,11 +169,12 @@ def main():
         if d is None:
             print(f"{k['label']:<24}{k['engine']:<6}{'(no trace)':>10}"); continue
         mx, si = d["mx"], d["simt"]
-        uc = mx.get("u_compute") or si.get("u_compute") or 0
-        uk = mx.get("u_kernel") or si.get("u_kernel") or 0
+        tr = d.get("asserted")
+        uc = "TRUNC" if tr else f"{cw_util(d):.2f}%"
+        uk = "TRUNC" if tr else f"{(mx.get('u_kernel') or si.get('u_kernel') or 0):.2f}%"
         ipc = si.get("ipc") or 0
         idle = d["rad"]["idle_frac"]
-        print(f"{k['label']:<24}{k['engine']:<6}{uc:>9.2f}%{uk:>9.2f}%{ipc:>7.3f}{idle:>6.1f}%  {limit[:25]:<26}{route[0]}")
+        print(f"{k['label']:<24}{k['engine']:<6}{uc:>10}{uk:>10}{ipc:>7.3f}{idle:>6.1f}%  {limit[:25]:<26}{route[0]}")
 
     write_markdown(rows)
     print(f"\nwrote {REPORT}")
@@ -159,15 +195,20 @@ def write_markdown(rows):
         if d is None:
             L.append(f"| {k['label']} | {k['engine']} | (no trace) | | | | | | | | | |"); continue
         mx, si, r = d["mx"], d["simt"], d["rad"]
-        uc = mx.get("u_compute") or si.get("u_compute") or 0
-        uk = mx.get("u_kernel") or si.get("u_kernel") or 0
+        tr = d.get("asserted")
+        uc = "TRUNC†" if tr else f"{cw_util(d):.2f}%"
+        uk = "TRUNC†" if tr else f"{(mx.get('u_kernel') or si.get('u_kernel') or 0):.2f}%"
         warm = f"{mx['u_steady']:.1f}%" if mx.get("u_steady") is not None else "—"
         ipc = f"{si['ipc']:.3f} ({si['issue_util']:.0f}%)" if si.get("ipc") is not None else "—"
-        bw = (k.get("bytes", 0) / d["kcyc"] / BW_DRAM * 100) if k.get("bytes") else 0
+        bw = "—" if tr else (f"{k.get('bytes', 0) / d['kcyc'] / BW_DRAM * 100:.0f}%" if k.get("bytes") else "—")
         sp = spill[0] if spill and spill[0] is not None else "?"
-        L.append(f"| {k['label']} | {k['engine']} | {uc:.2f}% | {uk:.2f}% | {warm} | {ipc} | "
-                 f"{bw:.0f}% | {r['idle_frac']:.0f}% | {r['overlap']:.2f}x | {sp} | "
+        L.append(f"| {k['label']} | {k['engine']} | {uc} | {uk} | {warm} | {ipc} | "
+                 f"{bw} | {r['idle_frac']:.0f}% | {r['overlap']:.2f}x | {sp} | "
                  f"**{limit}** | {route[0]} |")
+    L += ["", "† TRUNC = trace truncated by the L0d backpressure assertion at full tinyllama shape "
+          "(unbuffered per-tile l0d, makeLandingPads=false; cluster cache has it =true). Whole-kernel "
+          "util is therefore not measurable at full shape; the captured IPC (low) + the assertion "
+          "itself confirm MEMORY-BOUND. Same bottleneck class as the clean elementwise/GEMV kernels."]
     L += ["", "## Routing rationale", ""]
     for k, d, limit, route, spill in rows:
         if d is not None:

@@ -198,7 +198,7 @@ def measure(elf, trace, engine, macs=0, flops=0, byts=0, fmt="fp8", tile_macs=0,
     if engine in ("mx", "fused") and macs:
         klo = label_addr(labels, "main_matmul_k_loop", "start")
         khi = label_addr(labels, "main_matmul_k_loop", "end")
-        if klo is not None and khi is not None:
+        if klo is not None and khi is not None and cyc_span(cur, [(klo, khi)], floor):
             p2 = cyc_span(cur, [(klo, khi)], floor)
             p2cyc = p2[1] - p2[0]
             mx_active = p2cyc
