@@ -130,3 +130,30 @@ here (issue/mix + latency is), but it confirms SIMT matmul is nowhere near compu
 
 **Bottom line unchanged, now rigorous:** steady SIMT matmul compute util = **2.78% of ideal FP peak**,
 **37% of its realistic (instruction-mix) ceiling of 7.5%**. vs MX steady 92–96% of a peak 8× higher.
+
+## MX ↔ SIMT interleaving (concurrent-engine utilization)
+
+Two kinds of interleaving, measured separately (the whole-Radiance block's `overlap` = Σ engine-active
+/ union: 1.0× = serialized, >1× = concurrent):
+
+**1. Orchestration/prefetch overlap — happens, but nearly free.** During the anchor128 MX compute
+window (P2 K-loop, 35,645 cyc) the SIMT cores issue only 3,321 instrs → **IPC 0.093 (4.7% of peak
+issue)**: MMIO to drive the systolic array + `copy_gmem_to_smem_async` prefetch of the next tile's
+operands, overlapping the array's compute (this is the latency-hiding that keeps MX at 92%). So the
+systolic array and the async-DMA/orchestration path DO run concurrently.
+
+**2. Compute–compute overlap — does NOT happen anywhere.** During MX matmul the SIMT compute engine is
+**~95% idle** (only that 4.7% orchestration). No measured kernel runs SIMT FMAs concurrently with MX
+MACs — `overlap = 1.00×` on every kernel, including the "fused" test33 (its RoPE runs strictly *after*
+the matmul completes, serialized).
+
+**The headroom this quantifies:** ~95% of the SIMT cores' issue capacity sits idle for the entire MX
+matmul. Scheduling independent SIMT work there (the next op's RMSNorm/RoPE/residual/dequant, or a
+second attention head) would be near-free — this is the concrete, measured basis for the "~2× on
+fused layers" lever. The tool would show it as `overlap > 1×` and a higher combined throughput
+efficiency; today that number is 1.00× everywhere.
+
+**How the framework scores a genuinely interleaved kernel** (when one is built): per-engine active
+fraction over the shared window, `any-engine busy %`, `overlap = Σ active / union` (>1× = real
+concurrency), and combined throughput efficiency `(MX_flop + SIMT_flop) / ((MX_peak+SIMT_peak)×cyc)` —
+so concurrent MX+SIMT work is credited to both engines in the same cycles.
