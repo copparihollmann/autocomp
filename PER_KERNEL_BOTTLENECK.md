@@ -99,3 +99,34 @@ cores own norms/activation/RoPE/residual/decode-GEMV.
 hazard); the naive version completes but is memory-bound (IPC 0.74 is issue-limited by the 12× non-FMA
 overhead, not compute). Its RTL verify also fails (tohost=1417) — another drain-invariant
 cyclotron-vs-RTL mismatch; cycles/util remain valid (data-independent control flow).
+
+### SIMT compute — rigorous windup/steady/winddown + realistic roofline (correction)
+
+Concern raised: is the SIMT number measured over the *steady* compute window (excluding windup/
+winddown), like the MX P2 K-loop is? Checked on GEMM 64³:
+
+| segment | cyc | % of kernel |
+|---|--:|--:|
+| windup (kernel start → 1st FMA) | 2,657 | 0.9% |
+| **STEADY (1st → last FMA)** | 294,991 | **99.1%** |
+| winddown (last FMA → end) | 78 | 0.0% |
+
+Unlike MX (where config+DMA+move-out are ~66% of the kernel), a compute-heavy SIMT matmul is
+**99% inner loop** — so windup/winddown are negligible and the steady compute util (**2.78%**) equals
+the whole-kernel util (2.75%). The number was steady-state; now proven.
+
+**Ideal roofline:** 2.78% of FP peak (64 flop/cyc).
+
+**Realistic roofline A — instruction-mix / issue ceiling (the binding one):** with a 7.5% FMA-fraction,
+the achievable ceiling even at *peak issue* is `2 instr/cyc × 0.075 × 16 lanes = 2.39 MAC/cyc = 7.5% of
+FP peak`. Steady achieves 0.89 MAC/cyc = **37% of this realistic ceiling** — and 37% == the issue
+utilization, i.e. the remaining gap to the mix-ceiling is pure memory-latency stall (63% of cycles
+issue nothing). So the SIMT matmul is **memory-latency-bound underneath a 7.5%-of-peak instruction-mix
+ceiling**. Tiling to hide the latency (approach the 7.5% ceiling) trips the l0d assertion on this SoC.
+
+**Realistic roofline B — memory-BW:** best-case full-reuse AI = 10.7 flop/B < DRAM ridge 16 → cold-DRAM
+ceiling 43 flop/cyc; the naive kernel re-reads B so real AI is lower. BW is not the *binding* limit
+here (issue/mix + latency is), but it confirms SIMT matmul is nowhere near compute-bound.
+
+**Bottom line unchanged, now rigorous:** steady SIMT matmul compute util = **2.78% of ideal FP peak**,
+**37% of its realistic (instruction-mix) ceiling of 7.5%**. vs MX steady 92–96% of a peak 8× higher.
