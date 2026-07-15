@@ -157,3 +157,29 @@ efficiency; today that number is 1.00× everywhere.
 fraction over the shared window, `any-engine busy %`, `overlap = Σ active / union` (>1× = real
 concurrency), and combined throughput efficiency `(MX_flop + SIMT_flop) / ((MX_peak+SIMT_peak)×cyc)` —
 so concurrent MX+SIMT work is credited to both engines in the same cycles.
+
+## Tensor core (= MX-Gemmini) — ideal vs realistic utilization
+
+Confirmed via RTL: the "tensor core" is **MX-Gemmini itself** (the only matrix engine, `GemminiTileLike`,
+16×16 systolic; no separate Muon wmma/mma unit — `CyclotronTile.scala` has none, and `sgemm_tcore`
+drives Gemmini). So profiling the tensor core = the MX profiling, with both rooflines made explicit:
+
+**IDEAL roofline (% of peak MAC):** compute-window **91.9%** (K=512), 88% (K=128); whole-kernel 34%→2%
+(overhead-diluted). Peak 256 MAC/cyc fp8, 512 fp6/fp4.
+
+**REALISTIC roofline (compute-window):** the systolic array's operand feed is **~3.7 B/cyc from SMEM**
+with reuse (raw wavefront 16 A + 16 B fp8 = 32 B/cyc), both ≤ SMEM capacity (64 B/cyc, 32 contended).
+So the array is **NOT operand-feed-bound → COMPUTE-bound → realistic ≈ ideal ≈ 92%**. The remaining
+8% to peak is **systolic fill/drain pipeline latency**, not memory.
+
+**Key contrast with the SIMT cores:** the tensor core has **no per-MAC instruction overhead** (one
+systolic array streams operands; there are no per-element loads/address/control/divergence
+instructions). So its realistic ceiling ≈ its ideal peak, and it actually reaches ~92% — whereas the
+SIMT lanes are capped at a ~7.5%-of-peak instruction-mix ceiling. That is the fundamental reason
+matmul lives on the tensor core.
+
+**Feed-ceiling caveat (fp6/fp4):** sub-byte formats run the 32-wide path at 512 MAC/cyc → raw wavefront
+feed ≈ 64 B/cyc = the *uncontended* SMEM limit (2× the contended 32 B/cyc). So fp6/fp4 sit right at the
+SMEM-feed ceiling; if both cores contend for SMEM the sub-byte tensor-core path can become
+feed-bound. (The measured fp6/fp4 kernels are tiny/overhead-bound, so this ceiling isn't hit there —
+but at scale it's the realistic limiter for sub-byte matmul, worth an RTL check.)
