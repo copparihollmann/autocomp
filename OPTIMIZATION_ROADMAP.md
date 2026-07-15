@@ -51,3 +51,28 @@ accuracy-sensitive matmuls (scores, some projections), fp6/fp4 for the large err
 (FFN) → another up-to-2×. Net realistic target: **layer throughput ~2× (overlap) × up-to-2× (precision)
 × the overhead-amortization**, gated on (1) team fp6/fp4 RTL, (2) l0d coalescing, (3) a real fused/
 overlapped layer scheduler (the biggest software lift).
+
+## A1 UPDATE — l0d workaround findings (measured) + methodology fix
+
+**Occupancy-drop avoids the l0d assert but is NOT a viable standalone fix.** Measured on ResAdd 128×512:
+- NW=4 (baseline): trips the l0d assert, aborts at ~18K cyc.
+- NW=2 and NW=1: **do NOT assert** (lower occupancy holds the l0d off) but perf **craters** — 1.8M+
+  simulated cycles and still climbing (vs the assert at 18K). Single-lane (u_t35_gmvsm `if(tid!=0)return`)
+  passes but is the extreme.
+- Coalescing alone (sol28_coalesced) still tripped it.
+=> For a **pure-streaming** SIMT kernel, the only l0d-safe configs starve concurrency so hard that
+throughput collapses. Occupancy/ILP tuning is a dead-end for standalone streaming on this l0d.
+
+**The real fix is FUSION, not occupancy.** The l0d assert is a *sustained GMEM-streaming* phenomenon.
+Make the elementwise op **SMEM-resident** (read operands staged by an adjacent MX matmul, write back to
+SMEM / into the next matmul) so there is no sustained GMEM stream → no l0d pressure. Proven by the
+flash-attention kernel: its SIMT online-softmax reads S from SMEM (the QK result tile) and runs clean at
+2 warps. So SwiGLU/ResAdd/RoPE should be **fused into the matmul epilogue/prologue** (Phase B.2/B.4),
+NOT run as standalone streaming kernels. Standalone streaming (final residual, embedding) that genuinely
+can't be fused is inherently l0d-limited on this silicon — flag as a HW constraint.
+
+**Methodology fix (important):** the RTL sweep ran the sim with `+verbose`, producing 190–260 MB
+stdout logs per run that made 4 concurrent sims catastrophically I/O-bound (~150 cyc/s). The trace-db
+`.sqlite` (what we parse) is independent of `+verbose`. **Drop `+verbose` from the sim command** in
+`sweep_util_trace.sh` for all campaign RTL runs → far faster, no giant logs. Also cap concurrency
+(≤2 heavy Verilator sims) and keep DRAIN modest (verify PASS needs ~2–20K, not 300K).
