@@ -179,3 +179,8 @@ config/
 tmp*/
 temp*/
 gate_logs/
+
+# Run output: regenerable, and large. autocomp writes a directory per run.
+performance_logs/
+*.sqlite
+*.encoded.trace
