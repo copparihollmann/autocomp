@@ -193,13 +193,14 @@ Measured the SMEM + 8-way register-blocked variant (sol0_smem_reg8) on RTL, 64³
 | SIMT GEMM 64³ | cyc | IPC | SIMT compute util | RTL |
 |---|--:|--:|--:|---|
 | naive (1 out/thread) | 297,726 | 0.74 (37% issue) | 2.78% | verify-fail |
-| **SMEM + 8-way register-blocked** | **30,940** | 0.25 | **26.48%** | **PASSED, clean** |
+| SMEM + 8-way register-blocked | ~~30,940~~ INVALID | — | ~~26.48%~~ | ❌ **aborted on Rename register-wall** (retracted) |
 
-Register blocking → **9.6× faster, ~10× higher compute util (2.78%→26.48%)**, and it *clears the l0d
-assertion* (fewer global loads = less l0d response pressure) where the SMEM-only variant tripped it.
-So the fair SIMT-core matmul compute utilization is **~26% of FP peak**, not 2.78%. Still well below the
-tensor core's 92% — the scalar-lane instruction overhead is real, but a well-written SIMT GEMM uses the
-lanes ~10× better than naive. (Note: sgemm_tcore/sgemm_wg use bit-manip FP helpers so the fmadd.s
+**RETRACTED (2026-07-15):** the reg8 run ABORTED on the RTL Rename register-wall (8 accumulators × warps
+> 256 phys regs, globalOverSubscription) — 0 output stores, so 30,940 cyc / 26.48% were a truncated
+aborted run, NOT a real result. Both reg8 variants (test0, test6) abort. Aggressive register tiling is
+register-INFEASIBLE on this RTL (the 256-reg wall). The only VALID SIMT-GEMM datapoint remains the
+naive (2.78%, complete run). A register-tiled win must respect the 256-reg wall (smaller tile / fewer
+warps) and be re-measured to completion + trace-verified before any claim. (Note: sgemm_tcore/sgemm_wg use bit-manip FP helpers so the fmadd.s
 FMA-fraction wasn't cleanly extractable for this variant; compute-util from verified MACs/cyc is exact.)
 
 ## Fused MX flash-attention (Richard's flash_attention_mx, Sq64×Sk256×d128) — RTL evaluation
