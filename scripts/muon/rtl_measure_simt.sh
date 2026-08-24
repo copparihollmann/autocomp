@@ -15,7 +15,7 @@ export RISCV64_TOOLCHAIN_PATH=${RISCV:-/scratch/agustin/projects/chipyard/.conda
 mkdir -p "$RK"
 [ -f "$H/data" ] || (cd "$H" && python3 gen_data.py >/dev/null)
 # substitute candidate into the flat harness -> kernel.cpp
-python3 - "$H/test$N.c" "$SOL" "$RK/kernel.cpp" <<'PY'
+python3 - "$H/test$N.cpp" "$SOL" "$RK/kernel.cpp" <<'PY'
 import sys; h,s,o=sys.argv[1:4]
 t=open(h).read(); c=open(s).read()
 a=t.index("// SUBSTITUTE HERE")+len("// SUBSTITUTE HERE"); b=t.index("// SUBSTITUTE END")

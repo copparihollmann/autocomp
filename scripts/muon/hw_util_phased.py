@@ -40,7 +40,7 @@ NUM_CORES, NUM_LANES = 2, 16
 PEAK_ISSUE = NUM_CORES
 PEAK_SIMT_MAC = NUM_CORES * NUM_LANES          # 32
 PEAK_SIMT_FLOP = PEAK_SIMT_MAC * 2             # 64
-PEAK_MX = {"fp8": 256, "fp6": 512, "fp4": 512}
+PEAK_MX = {"fp8": 256, "fp6": 1024, "fp4": 1024}  # MAC/cyc = numOutputs(1/4/4) x 256 PEs (MxParameters.scala)
 BW_DRAM, BW_SMEM, BW_SMEM_CONTENDED = 4, 64, 32
 EXCLUDE = ("main", "verify_body", "_start", "_exit")
 EXCLUDE_PREFIX = ("mu_schedule", "init", "vx_", "__", "memcpy", "memset")

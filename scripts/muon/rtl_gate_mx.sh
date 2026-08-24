@@ -53,6 +53,9 @@ open(out, "w").write(text[:a] + "\n" + code + "\n" + text[b:])
 PY
 cp "$H/data" "$H/Makefile" "$H/host.cpp" "$RK/"
 cp /scratch/agustin/projects/radiance-kernels/kernels/gemm_mxgemmini/mxgemm_lib.hpp "$RK/"
+# Stage any problem-specific headers shipped with the harness (e.g. the parameterized
+# mxgemm_lib_param.hpp for fused multi-matmul blocks).
+for hpp in "$H"/*.hpp; do [ -f "$hpp" ] && cp "$hpp" "$RK/"; done
 rm -f "$RK"/kernel.mu.o "$RK"/kernel.soc.elf "$RK"/kernel.radiance.elf
 make -C "$RK" EXTRA_MU_CFLAGS="-DDRAIN_ITERS=$DRAIN" kernel.soc.elf > "$RK/build.log" 2>&1 \
   || { echo "COMPILE-FAIL"; tail -5 "$RK/build.log"; exit 1; }

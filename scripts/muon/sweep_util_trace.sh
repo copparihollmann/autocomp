@@ -50,11 +50,13 @@ cp "$H/data" "$H/Makefile" "$RK/" 2>/dev/null
 [ -f "$H/host.cpp" ] && cp "$H/host.cpp" "$RK/"
 cp /scratch/agustin/projects/radiance-kernels/kernels/gemm_mxgemmini/mxgemm_lib.hpp "$RK/" 2>/dev/null
 rm -f "$RK"/kernel.mu.o "$RK"/kernel.soc.elf "$RK"/kernel.radiance.elf
-make -C "$RK" EXTRA_MU_CFLAGS="-DDRAIN_ITERS=$DRAIN" kernel.soc.elf > "$RK/build.log" 2>&1 \
+make -C "$RK" EXTRA_MU_CFLAGS="-DDRAIN_ITERS=$DRAIN ${EXTRA_CFLAGS:-}" kernel.soc.elf > "$RK/build.log" 2>&1 \
   || { echo "$TAG COMPILE-FAIL"; tail -4 "$RK/build.log"; exit 1; }
 
 TR="$RK/trace_$TAG.sqlite"; rm -f "$TR"
-bash -c "ulimit -s unlimited; exec timeout 14400 '$SIMV' +permissive +verbose +max-cycles=100000000 \
+# NOTE: NO +verbose -- it dumps every instruction to stdout (190-260MB logs) and makes concurrent
+# sims catastrophically I/O-bound. The trace-db .sqlite (what we parse) is independent of +verbose.
+bash -c "ulimit -s unlimited; exec timeout 14400 '$SIMV' +permissive +max-cycles=100000000 \
       +trace-db='$TR' +loadmem='$RK/kernel.soc.elf' +permissive-off '$RK/kernel.soc.elf'" \
       > "$RK/sim.log" 2>&1 || true
 [ -s "$TR" ] && echo "$TAG TRACE-OK $TR" || { echo "$TAG SIM-FAIL"; tail -4 "$RK/sim.log"; exit 1; }

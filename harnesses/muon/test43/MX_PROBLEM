@@ -1,0 +1,1 @@
+combined Muon SIMT + MX-Gemmini fused FFN block (fp4). Needs CYCLOTRON_MXGEMMINI=1 and mxgemm_lib_param.hpp staged.

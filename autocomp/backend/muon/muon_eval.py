@@ -6,11 +6,21 @@ Pipeline per candidate:
   "case=<errors>") + latency from "simulation finished after N cycles".
 """
 
+import os
 import pathlib
 import re
 import shutil
 import subprocess
 from typing import List
+
+# Opt-in: use the cyclotron FUNCTIONAL run (no --timing) as BOTH the correctness gate
+# (tohost=0, bit-exact) AND the fitness (dynamic-issue cycle count). Needed for FUSED
+# multi-body megakernels (e.g. the fp4 FFN block) that DEADLOCK under cyclotron --timing
+# (the documented warp-reconvergence sync in down_body -> Err(0)); their timing model
+# never retires, so the normal timed-latency fitness is unavailable. The functional
+# issue-count is a coarser cyclotron pre-filter (ranks SIMT-body instruction-count
+# micro-opts); RTL remains the arbiter. Set MUON_FUNC_FITNESS=1 to enable.
+FUNC_FITNESS = os.getenv("MUON_FUNC_FITNESS") == "1"
 
 from autocomp.common import HARNESSES_DIR, logger
 from autocomp.backend.eval_backend import EvalBackend
@@ -163,6 +173,11 @@ class MuonEvalBackend(EvalBackend):
             host_cpp = harness_dir / "host.cpp"
             if host_cpp.exists():
                 shutil.copy(host_cpp, work / "host.cpp")
+            # Stage any problem-specific headers shipped with the harness (e.g. the
+            # parameterized-operand mxgemm_lib_param.hpp used by fused multi-matmul
+            # blocks, which the stock global-operand mxgemm_lib.hpp cannot drive).
+            for hpp in harness_dir.glob("*.hpp"):
+                shutil.copy(hpp, work / hpp.name)
         # The Makefile has no dependency on `data`/`mxgemm_lib.hpp`, so a stale object
         # would silently survive a golden or driver change.
         for stale in ("kernel.mu.o", "kernel.radiance.elf"):
@@ -232,6 +247,15 @@ class MuonEvalBackend(EvalBackend):
                                      "barriers (mu_barrier(1, nw)) between SMEM produce/consume, and the "
                                      "thread->output mapping derived from threads_per_threadblock (not a "
                                      "literal warp count). Gold accumulates sequentially (FP order).")
+            # FUNCTIONAL-FITNESS mode: the fused megakernel deadlocks under --timing, so use
+            # the functional-run cycle count (dynamic issue count) as the fitness and SKIP the
+            # timed phase. Correctness already gated above (tohost=0, bit-exact).
+            if FUNC_FITNESS:
+                mfc = re.findall(r"finished after (\d+) cycles", fout)
+                cyc = int(mfc[-1]) if mfc else None
+                if cyc is None:
+                    return False, None, "FUNC-FITNESS: no cycle count in the functional run."
+                return True, cyc, None
 
         # Phase 2: timed run — AUTHORITATIVE for both correctness and cycles. The functional
         # gate above is only a fast pre-filter; some failures are TIMING-DEPENDENT and pass

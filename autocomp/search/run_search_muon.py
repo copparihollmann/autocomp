@@ -35,7 +35,7 @@ def main():
     # Target & environment
     # ------------------------------------------------------------------
     backend_name = "muon"
-    agent_name = "built:muon"
+    agent_name = "built:radiance"
     simulator = "cyclotron"
     hw_config = MuonHardwareConfig()
 
@@ -45,17 +45,20 @@ def main():
     # ------------------------------------------------------------------
     # Models
     # ------------------------------------------------------------------
-    models = [
-        # HYBRID (proven on the MX-Gemmini target): plan on cheap off-AWS Flash, code on the SOTA
-        # coder. Flash proposes optimization directions; Qwen-480B writes the kernels.
-        "gcp::gemini-3.5-flash",
-        # "gemini-3.1-pro-preview",                 # Pro: stronger planner but ~6-10x pricier (thinking)
-        # "aws::us.anthropic.claude-sonnet-4-6",    # Sonnet 4.6 (Bedrock; daily-token throttled)
-    ]
-    # Code-gen on Qwen3-Coder-480B (Bedrock, separate quota => unthrottled). SOTA coder; drove
-    # 1.4-2.07x on MX-Gemmini where cheap models found nothing. (Muon caveat: cyclotron under-ranks
-    # SMEM, so its wins show only where the oracle is faithful — conv/attention compute, reg-tiling.)
-    code_models = ["aws::qwen.qwen3-coder-480b-a35b-v1:0"]
+    import os as _os
+    if _os.getenv("MUON_MODEL"):
+        # Single-model override (e.g. MUON_MODEL=aws::us.anthropic.claude-sonnet-4-6, the
+        # proven best for novel/orchestration-heavy combined kernels per autocomp-model-selection).
+        models = [_os.getenv("MUON_MODEL")]
+        code_models = None
+    else:
+        models = [
+            # HYBRID (proven on the MX-Gemmini target): plan on cheap off-AWS Flash, code on the SOTA
+            # coder. Flash proposes optimization directions; Qwen-480B writes the kernels.
+            "gcp::gemini-3.5-flash",
+        ]
+        # Code-gen on Qwen3-Coder-480B (Bedrock, separate quota => unthrottled).
+        code_models = ["aws::qwen.qwen3-coder-480b-a35b-v1:0"]
 
     # ------------------------------------------------------------------
     # Search (minimal smoke config)
