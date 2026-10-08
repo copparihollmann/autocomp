@@ -26,7 +26,22 @@ prob_macs_map = {
 "admm-multifunction": [
     (12*4*1+12*4*1+12*12*1)*5,
     (4*12*1+4*4*1+4*12*1+12*12*1)*10,
-]
+],
+# gemm — MAC counts for the (M, K, N) shapes in harnesses/gemm/test{N}.c.
+# Added so the gemmini_agent.utilization-feedback path resolves for the
+# `gemm` prob_type (which autocomp's pipeline ships harnesses + sols for
+# but never registered with the agent's MACs map).
+"gemm": [
+    32 * 2048 * 2048,   # prob_id=0
+    1024 * 1024 * 1024, # prob_id=1
+    256 * 256 * 256,    # prob_id=2
+    6272 * 64 * 256,    # prob_id=3
+    12544 * 64 * 128,   # prob_id=4
+    12544 * 128 * 256,  # prob_id=5
+    128 * 1024 * 1024,  # prob_id=6
+    64 * 1024 * 1024,   # prob_id=7
+    32 * 1024 * 1024,   # prob_id=8
+],
 }
 
 class GemminiLLMAgent(LLMAgent):

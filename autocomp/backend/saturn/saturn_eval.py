@@ -12,9 +12,12 @@ from autocomp.common import logger, SOLS_DIR
 from autocomp.search.prob import Prob, Test
 from autocomp.backend.eval_backend import EvalBackend
 
-# Environment path variables
-SATURN_CHIPYARD_PATH = ""
-SATURN_ZEPHYR_BASE = ""  # Zephyr installation root
+# Environment path variables. XPU-RT integration: read from env so the
+# matrix driver can configure these without editing source. Empty string
+# falls back to the previous "must be set explicitly" behaviour.
+import os as _os
+SATURN_CHIPYARD_PATH = _os.environ.get("SATURN_CHIPYARD_PATH", "")
+SATURN_ZEPHYR_BASE = _os.environ.get("SATURN_ZEPHYR_BASE", "")  # Zephyr installation root
 
 # Timeouts (seconds)
 SATURN_SPIKE_TIMEOUT = 60.0

@@ -11,9 +11,13 @@ from autocomp.search.prob import Prob
 from autocomp.backend.eval_backend import EvalBackend
 from autocomp.hw_config.gemmini_config import GemminiHardwareConfig
 
-FP32_4PE_CHIPYARD_PATH = None
-INT8_16PE_CHIPYARD_PATH = "/scratch/charleshong/chipyard"
-INT8_32PE_CHIPYARD_PATH = None
+import os as _os
+FP32_4PE_CHIPYARD_PATH = _os.environ.get("FP32_4PE_CHIPYARD_PATH") or None
+INT8_16PE_CHIPYARD_PATH = (
+    _os.environ.get("INT8_16PE_CHIPYARD_PATH")
+    or "/scratch2/agustin/chipyard"  # local default for the XPU-RT cross-target study
+)
+INT8_32PE_CHIPYARD_PATH = _os.environ.get("INT8_32PE_CHIPYARD_PATH") or None
 
 def clean_code(code_str: str) -> str:
     """
@@ -63,9 +67,20 @@ def compile_gemmini_code(code_contents: str, gemmini_path: pathlib.Path):
     # if test_name_str:
     #     test_name += "_" + str(test_name_str)
     gemmini_sw_path = gemmini_path / "software" / "gemmini-rocc-tests"
+    # Prepend the shorthand-intrinsic aliases header so autocomp's
+    # baselines / LLM proposals (which use bare `mvin`, `config_ld`,
+    # `preload` etc. from the prompt's ISA reference) resolve
+    # against the real gemmini_extended_* API. The aliases header
+    # lives in gemmini-rocc-tests/include/autocomp_aliases.h.
+    _prelude = '#include "include/autocomp_aliases.h"\n'
+    code_with_aliases = (
+        code_contents
+        if "autocomp_aliases.h" in code_contents
+        else _prelude + code_contents
+    )
     # copy in file
     with open(gemmini_sw_path / "bareMetalC" / (test_name + ".c"), "w") as f:
-        f.write(code_contents)
+        f.write(code_with_aliases)
 
     # # edit Makefile
     # with open(gemmini_sw_path / 'bareMetalC' / 'Makefile', 'r') as file:
@@ -121,9 +136,20 @@ def run_spike(code_contents: str, return_dict: dict, gemmini_path: pathlib.Path,
     # if test_name_str:
     #     test_name += "_" + str(test_name_str)
     gemmini_sw_path = gemmini_path / "software" / "gemmini-rocc-tests"
+    # Prepend the shorthand-intrinsic aliases header so autocomp's
+    # baselines / LLM proposals (which use bare `mvin`, `config_ld`,
+    # `preload` etc. from the prompt's ISA reference) resolve
+    # against the real gemmini_extended_* API. The aliases header
+    # lives in gemmini-rocc-tests/include/autocomp_aliases.h.
+    _prelude = '#include "include/autocomp_aliases.h"\n'
+    code_with_aliases = (
+        code_contents
+        if "autocomp_aliases.h" in code_contents
+        else _prelude + code_contents
+    )
     # copy in file
     with open(gemmini_sw_path / "bareMetalC" / (test_name + ".c"), "w") as f:
-        f.write(code_contents)
+        f.write(code_with_aliases)
 
     # # edit Makefile
     # with open(gemmini_sw_path / 'bareMetalC' / 'Makefile', 'r') as file:
